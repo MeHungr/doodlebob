@@ -8,15 +8,21 @@ import (
 )
 
 // main starts a listener
+// Can either be run with manual interface selection, or attempt to find the default
 func main() {
-	// Select an interface
-	device, err := agent.ChooseInterface()
-	if err != nil {
-		log.Fatal(err)
-	}
+	// // Select an interface
+	// device, err := agent.ChooseInterface()
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	//
+	// // Begin listening
+	// handle, err := agent.Listen(device)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
-	// Begin listening
-	handle, err := agent.Listen(device)
+	handle, err := agent.ListenDefaultInterface()
 	if err != nil {
 		log.Fatal(err)
 	}
