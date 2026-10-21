@@ -16,7 +16,13 @@ func main() {
 	}
 
 	// Begin listening
-	if err := agent.Listen(device); err != nil {
+	handle, err := agent.Listen(device)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Read all incoming packets & print length
+	if err := agent.ReadPackets(handle); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -53,7 +53,7 @@ func ChooseInterface() (*pcap.Interface, error) {
 }
 
 // Listen listens for traffic on the selected interface
-func Listen(device *pcap.Interface) error {
+func Listen(device *pcap.Interface) (*pcap.Handle, error) {
 	// Opens a packet capture on the specified interface
 	handle, err := pcap.OpenLive(
 		device.Name,       // Name of the interface
@@ -62,9 +62,8 @@ func Listen(device *pcap.Interface) error {
 		pcap.BlockForever, // Timeout length
 	)
 	if err != nil {
-		return fmt.Errorf("open interface %q: %w", device.Name, err)
+		return nil, fmt.Errorf("open interface %q: %w", device.Name, err)
 	}
-	defer handle.Close() // Close listener when this function returns
 
-	return nil
+	return handle, nil
 }
