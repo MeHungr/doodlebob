@@ -1,3 +1,8 @@
+# This is largely copied from another project of mine, https://github.com/MeHungr/peanut_butter
+# Therefore many things are commented out and it's not very pretty
+# This pretty much just builds the binaries
+# Also cross compiling is really complicated with libpcap so I'll likely have to pivot to another method eventually
+
 BINARY_DIR := ./bin
 GO := go
 
