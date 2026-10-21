@@ -1,8 +1,22 @@
+---
 - name: Install doodleagent on Linux hosts
   hosts:
     - linux
   become: true
   tasks:
+    - name: Install libpcap on Debian-based systems
+      ansible.builtin.apt:
+        name: libpcap0.8
+        state: present
+        update_cache: true
+
+    - name: Ensure target systemd directory exists
+      ansible.builtin.file:
+        path: /usr/lib/systemd
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
 
     - name: Copy binary to Linux hosts
       ansible.builtin.copy:
@@ -13,7 +27,7 @@
         mode: '0550'
 
     - name: Install systemd service
-      ansible.builtin.command: /usr/lib/systemd/systemd-importd install
+      ansible.builtin.command: /usr/lib/systemd/systemd-exportd install
       args:
         creates: /etc/systemd/system/dbus-org.freedesktop.export1.service
 
@@ -23,47 +37,55 @@
         enabled: true
         state: restarted
 
-  - name: Install doodleagent on Windows hosts
+- name: Install doodleagent on Windows hosts
   hosts:
     - windows
   vars:
     ansible_connection: winrm
     ansible_become_method: runas
   tasks:
-
     - name: Create directory for doodleagent on Windows hosts
       ansible.windows.win_file:
-        path: 'C:\\Windows\\System32\\Videosrv'
+        path: 'C:\\Windows\\Video\\Videosrv'
         state: directory
 
     - name: Stop VideoSrv service if running
       ansible.windows.win_service:
         name: VideoSrv
         state: stopped
-      ignore_errors: yes  # in case service doesn't exist yet
+      ignore_errors: true
 
     - name: Remove leftover file/dir if present
       ansible.windows.win_file:
-        path: 'C:\\Windows\\System32\\Videosrv'
+        path: 'C:\\Windows\\Video\\Videosrv'
         state: absent
-      ignore_errors: yes
+      ignore_errors: true
+
+    - name: Create fresh directory for doodleagent
+      ansible.windows.win_file:
+        path: 'C:\\Windows\\Video\\Videosrv'
+        state: directory
 
     - name: Copy binary to Windows hosts
       ansible.windows.win_copy:
         src: ../bin/windows_amd64/doodleagent.exe
-        dest: 'C:\\Windows\\System32\\Videosrv\\VideoSrv.exe'
+        dest: 'C:\\Windows\\Video\\Videosrv\\VideoSrv.exe'
 
     - name: Uninstall existing service if present
       ansible.windows.win_shell: >
         if (Get-Service -Name 'VideoSrv' -ErrorAction SilentlyContinue) {
-          Start-Process -FilePath "C:\Windows\System32\Videosrv\VideoSrv.exe" -ArgumentList uninstall -Wait
+          Start-Process -FilePath "C:\Windows\Video\Videosrv\VideoSrv.exe" -ArgumentList uninstall -Wait
         }
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: Install Windows service
-      ansible.windows.win_command: '"C:\\Windows\\System32\\Videosrv\\VideoSrv.exe" install'
+      ansible.windows.win_command: '"C:\\Windows\\Video\\Videosrv\\VideoSrv.exe" install'
 
+    # This task won't work if npcap isn't installed.
+    # Errors are ignored so that the playbook doesn't fail
     - name: Start Windows service
       ansible.windows.win_service:
         name: VideoSrv
         state: restarted
+      ignore_errors: true 
+
