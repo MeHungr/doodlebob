@@ -1,7 +1,7 @@
 all:
   vars:
-    ansible_user: mehungr
-    ansible_password: "6june2006"
+    ansible_user: xxxx
+    ansible_password: "xxxx"
 
   children:
     linux:
@@ -17,7 +17,7 @@ all:
         windows01:
           ansible_host: 10.10.40.18
       vars:
-        ansible_user: '.\mehungr'                    # Forces local authentication
+        ansible_user: '.\xxxx'                    # Forces local authentication
         ansible_connection: winrm
         ansible_winrm_scheme: http                   # Forces HTTP protocol
         ansible_winrm_port: 5985                     # Forces HTTP port
