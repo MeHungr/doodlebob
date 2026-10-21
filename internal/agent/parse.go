@@ -3,7 +3,6 @@ package agent
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/pcap"
@@ -16,13 +15,15 @@ func ReadPackets(handle *pcap.Handle) error {
 		handle.LinkType(),
 	)
 
-	// Read packets and print length
+	// Read packet application layer payloads and print them
 	for packet := range source.Packets() {
-		fmt.Printf("Captured packet: %d bytes\n", len(packet.Data()))
-
-		if errLayer := packet.ErrorLayer(); errLayer != nil {
-			log.Printf("Packet decoding error: %v", errLayer.Error())
+		appLayer := packet.ApplicationLayer()
+		if appLayer == nil {
+			continue
 		}
+
+		payload := appLayer.Payload()
+		fmt.Printf("Application payload: %x\n", payload)
 	}
 
 	return nil
