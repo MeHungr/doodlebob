@@ -3,6 +3,11 @@
 doodlebob is a Command and Control (C2) framework built in Go that utilizes `gopacket` and `pcap` to achieve Remote Code Execution (RCE) on both Windows and Linux platforms. \
 <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/20ef17e6-5ffc-4df1-adac-ad013d2b3714" />
 
+## The Idea
+The doodlebob CLI communicates with a packet listener on the target host over UDP using the `gopacket/pcap` packages. \
+This bypasses host-based firewalls, since these packets are intercepted before they are passed to the kernel's networking stack. \
+This is how tools like [Wireshark](https://www.wireshark.org/) and [tcpdump](https://www.tcpdump.org/) work.
+
 ## Repository Structure
 
 The project is organized into the following directories and files:
