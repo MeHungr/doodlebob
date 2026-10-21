@@ -98,8 +98,6 @@ func OpenShell(udpTarget, targetIP, targetPort string) error {
 		srcIP = rawIP
 	}
 
-	fmt.Println(srcIP + ":" + srcPort)
-
 	// Open reverse shell listener on random tcp port
 	listener, err := net.Listen("tcp", ":"+srcPort)
 	if err != nil {
