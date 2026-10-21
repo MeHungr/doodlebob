@@ -1,34 +1,44 @@
-// The main entrypoint for the listener agent
+// The main agent entrypoint
+// This can be run with no arguments to run in the foreground,
+// or, it accepts arguments for running as a service.
+// Valid arguments:
+//
+//	install
+//	uninstall
+//	start
+//	stop
 package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/MeHungr/doodlebob/internal/agent"
+	"github.com/kardianos/service"
 )
 
 // main starts a listener
-// Can either be run with manual interface selection, or attempt to find the default
 func main() {
-	// // Select an interface
-	// device, err := agent.ChooseInterface()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	//
-	// // Begin listening
-	// handle, err := agent.Listen(device)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	// Get the service configuration depending on OS
+	config := agent.GetServiceConfig()
+	prg := &agent.Program{}
 
-	handle, err := agent.ListenDefaultInterface()
+	// Create a new service
+	svc, err := service.New(prg, config)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("service.New: %v", err)
 	}
 
-	// Read all incoming packets & print length
-	if err := agent.ReadPackets(handle); err != nil {
-		log.Fatal(err)
+	// Allows control functions
+	if len(os.Args) > 1 {
+		if err := service.Control(svc, os.Args[1]); err != nil {
+			log.Fatalf("Valid actions: install, uninstall, start, stop. Error: %v", err)
+		}
+		return
+	}
+
+	// svc.Run will block and run in foreground if no arguments are provided
+	if err := svc.Run(); err != nil {
+		log.Fatalf("service run error: %v", err)
 	}
 }
