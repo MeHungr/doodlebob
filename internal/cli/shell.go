@@ -2,9 +2,6 @@ package cli
 
 import "github.com/spf13/cobra"
 
-// Declare flag variables
-var udpTarget string
-var port string
 
 var shellCommand = &cobra.Command{
 	Use: "shell <target-ip>",
