@@ -1,5 +1,5 @@
 // Includes utility functions
-package agent
+package network
 
 import (
 	"log"
@@ -11,7 +11,7 @@ import (
 // localIP determines the localIP of the host by opening a UDP connection
 // This does not send any packets, since UDP is connectionless
 // It simply forces the host to decide on an IP address
-func localIP() (localAddr *net.UDPAddr) {
+func LocalIP() (localAddr *net.UDPAddr) {
 	conn, err := net.Dial("udp", "8.8.8.8:80") // Open the connection
 	if err != nil {
 		log.Fatal(err)
@@ -24,7 +24,7 @@ func localIP() (localAddr *net.UDPAddr) {
 }
 
 // getNetworkInterface returns the network interface associated with an IP address
-func getNetworkInterface(ipAddr net.IP) *pcap.Interface {
+func GetNetworkInterface(ipAddr net.IP) *pcap.Interface {
 	devices, err := pcap.FindAllDevs()
 	if err != nil {
 		log.Fatal(err)

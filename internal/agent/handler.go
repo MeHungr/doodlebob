@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/MeHungr/doodlebob/internal/message"
+	"github.com/MeHungr/doodlebob/internal/network"
 	"github.com/MeHungr/doodlebob/pkg/executor"
 )
 
@@ -35,7 +36,7 @@ func sendHeartbeat(msg *message.Message) error {
 func handleMessage(msg *message.Message) error {
 	// Check that the IP address matches this host
 	switch msg.DstIP {
-	case localIP().IP.To4().String():
+	case network.LocalIP().IP.To4().String():
 		switch msg.Type {
 		// Sends a heartbeat back to the source host to test connectivity
 		case message.Heartbeat:

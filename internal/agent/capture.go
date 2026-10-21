@@ -4,6 +4,7 @@ package agent
 import (
 	"fmt"
 
+	"github.com/MeHungr/doodlebob/internal/network"
 	"github.com/google/gopacket/pcap"
 )
 
@@ -54,7 +55,7 @@ func ChooseInterface() (*pcap.Interface, error) {
 
 // ListenDefaultInterface calls Listen() using the default network interface
 func ListenDefaultInterface() (*pcap.Handle, error) {
-	handle, err := Listen(getNetworkInterface(localIP().IP))
+	handle, err := Listen(network.GetNetworkInterface(network.LocalIP().IP))
 	if err != nil {
 		return nil, fmt.Errorf("default interface: %w", err)
 	}
