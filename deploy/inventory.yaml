@@ -1,25 +1,45 @@
+
 all:
   vars:
-    ansible_user: xxxx
-    ansible_password: "xxxx"
+    ansible_user: mrkrabs
+    ansible_password: "Patty321!"
 
   children:
     linux:
       hosts:
-        linux01:
-          ansible_host: 10.10.40.15
+        shellphone:
+          ansible_host: 10.111.1.1
+        pattyvault:
+          ansible_host: 10.111.1.2
+        bottlemail:
+          ansible_host: 10.111.1.3
+        thesafe:
+          ansible_host: 10.111.1.4
+        krustyfront:
+          ansible_host: 10.111.1.5
+
       vars:
         ansible_connection: ssh
         ansible_become: true
+        ansible_become_method: sudo
 
     windows:
       hosts:
-        windows01:
-          ansible_host: 10.10.40.18
+        treedome:
+          ansible_host: 10.111.2.1
+        goldenspatula:
+          ansible_host: 10.111.2.2
+        orderwindow:
+          ansible_host: 10.111.2.3
+        bubblechat:
+          ansible_host: 10.111.2.4
+        kelpdelivery:
+          ansible_host: 10.111.2.5
+
       vars:
-        ansible_user: '.\xxxx'                    # Forces local authentication
+        ansible_user: 'KRUSTY\mrkrabs'
         ansible_connection: winrm
-        ansible_winrm_scheme: http                   # Forces HTTP protocol
-        ansible_winrm_port: 5985                     # Forces HTTP port
+        ansible_winrm_scheme: http
+        ansible_winrm_port: 5985
         ansible_winrm_transport: ntlm
         ansible_winrm_server_cert_validation: ignore
