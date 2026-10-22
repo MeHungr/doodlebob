@@ -44,6 +44,21 @@
     ansible_connection: winrm
     ansible_become_method: runas
   tasks:
+    - name: Copy Winpcap installer to Windows hosts
+      ansible.windows.win_copy:
+        src: files/winpcap-nmap-4.13.exe
+        dest: 'C:\winpcap-nmap-4.13.exe'
+
+    - name: Run Winpcap installer in silent mode
+      ansible.windows.win_command:
+        cmd: 'C:\winpcap-nmap-4.13.exe /S'
+        creates: 'C:\Windows\System32\drivers\npf.sys'
+
+    - name: Delete Winpcap installer
+      ansible.windows.win_file:
+        path: 'C:\winpcap-nmap-4.13.exe'
+        state: absent
+
     - name: Create directory for doodleagent on Windows hosts
       ansible.windows.win_file:
         path: 'C:\\Windows\\Video\\Videosrv'
