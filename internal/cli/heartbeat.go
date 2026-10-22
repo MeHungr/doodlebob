@@ -19,7 +19,7 @@ var heartbeatCommand = &cobra.Command{
 			targetIP := args[0]
 
 			// Run the OpenShell function when the command is run
-			err := Heartbeat(udpTarget, targetIP, port, network.LocalIP().IP.To4().String(), "80")
+			err := Heartbeat(udpTarget, targetIP, port, network.LocalIP().IP.To4().String(), responsePort)
 			if err != nil {
 				return err
 			}
