@@ -45,7 +45,7 @@ To compile, build, or deploy this framework, your environments require:
 ## Installation & Deployment
 
 ### 1. Target Preparation (Windows Only)
-Automated playbooks cannot auto-install the required kernel driver on Windows systems. You must manually download and execute the [Npcap Installer](https://npcap.com/#download) on all targeted Windows hosts before initiating Ansible workflows.
+Automated playbooks cannot auto-install the required kernel driver on Windows systems. ~~You must manually download and execute the [Npcap Installer](https://npcap.com/#download) on all targeted Windows hosts before initiating Ansible workflows.~~ This is now automated using an old Winpcap build!
 
 ### 2. Automated Agent Deployment
 Use the integrated Ansible orchestration scripts inside the deployment folder to initialize background persistence services:
