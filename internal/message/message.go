@@ -18,6 +18,7 @@ const (
 type Message struct {
 	Type MessageType `json:"type"` // Message type
 	DstIP   string `json:"dstip"` // Destination IP -- The target host
+	DstPort string `json:"dstport"` // Destination Port -- The target host's port
 	SrcIP string `json:"srcip,omitempty"` // Source IP -- The control host
 	SrcPort string `json:"srcport,omitempty"` // Source Port -- Source port for reverse shell
 	Data string `json:"data"` // Payload for commands

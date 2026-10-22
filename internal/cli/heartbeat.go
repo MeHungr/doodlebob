@@ -32,7 +32,7 @@ func init() {
 	rootCmd.AddCommand(heartbeatCommand)
 
 	// Add a flag for udp target and udp port
-	heartbeatCommand.Flags().StringVarP(&responsePort, "response-port", "r", "80", "Specify a response port for the UDP packet (not the target of the command)")
+	heartbeatCommand.Flags().StringVarP(&responsePort, "response-port", "r", "8080", "Specify a response port for the UDP packet (not the target of the command)")
 	heartbeatCommand.Flags().StringVarP(&udpTarget, "target", "t", udpTarget, "Specify a destination host for the UDP packet (not the target of the command)")
 	heartbeatCommand.Flags().StringVarP(&port, "port", "p", "53", "Specify a destination port for the UDP packet (not the target of the command)")
 }

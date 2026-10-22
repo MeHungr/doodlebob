@@ -62,21 +62,36 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 
 	// Dial the target with udp to send heartbeat request
 	go func() {
-		conn, err := net.Dial("udp", addr)
+		targetAddr, err := net.ResolveUDPAddr("udp", addr)
 		if err != nil {
-			errChan <- fmt.Errorf("connecting to client: %w", err)
+			errChan <- fmt.Errorf("resolving target: %w", err)
 			return
 		}
-		defer conn.Close()
 
 		msg := &message.Message{
 			Type:    message.Heartbeat,
 			DstIP:   targetIP,
+			DstPort: targetPort,
 			SrcIP:   srcIP,
 			SrcPort: srcPort,
 			Data:    "",
 		}
-		prependHeaderAndSend(msg, conn)
+
+		jsonPayload, err := json.Marshal(msg)
+		if err != nil {
+			errChan <- fmt.Errorf("encoding message: %w", err)
+			return
+		}
+
+		payload := append(
+			append([]byte(nil), message.MagicHeader...),
+			jsonPayload...,
+		)
+
+		_, err = listener.WriteTo(payload, targetAddr)
+		if err != nil {
+			errChan <- fmt.Errorf("sending heartbeat: %w", err)
+		}
 	}()
 
 	// Handle synchronization and errors safely
@@ -169,6 +184,7 @@ func sendShell(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 	msg := &message.Message{
 		Type:    message.Shell,
 		DstIP:   targetIP,
+		DstPort: targetPort,
 		SrcIP:   srcIP,
 		SrcPort: srcPort,
 		Data:    "",
@@ -197,6 +213,7 @@ func SendCommand(udpTarget, targetIP, port string, cmd string) error {
 	msg := &message.Message{
 		Type:  message.Command,
 		DstIP: targetIP,
+		DstPort: port,
 		Data:  cmd,
 	}
 
