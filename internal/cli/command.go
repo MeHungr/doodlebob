@@ -6,7 +6,7 @@ var commandCommand = &cobra.Command{
 	Use:   "command <target-ip> \"<command>\"",
 	Short: "Executes a command on the target",
 	Long: `Executes a command on the target.
-	Defaults to <target-ip>:53 for the UDP target, can be changed with flags
+	Defaults to <target-ip>:6767 for the UDP target, can be changed with flags
 	Example:
 		doodlebob command 192.168.10.1 "whoami"`,
 	Args: cobra.MinimumNArgs(2), // Ensures at least 2 arguments

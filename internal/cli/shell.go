@@ -6,7 +6,7 @@ var shellCommand = &cobra.Command{
 	Use:   "shell <target-ip>",
 	Short: "Opens a reverse shell that the target connects to",
 	Long: `Opens a shell on a random port between 10000 and 55000, then has the target attempt to connect to it.
-	Defaults to <target-ip>:53 for the destination of the UDP packet, can be changed with flags.
+	Defaults to <target-ip>:6767 for the destination of the UDP packet, can be changed with flags.
 	Example:
 		doodlebob shell 192.168.10.1`,
 	Args: cobra.MinimumNArgs(1), // Ensures at least 1 argument

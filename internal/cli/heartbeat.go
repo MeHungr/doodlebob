@@ -11,7 +11,7 @@ var heartbeatCommand = &cobra.Command{
 	Use:   "heartbeat <target-ip>",
 	Short: "Queries the target for a sign of life (heartbeat)",
 	Long: `Asks the target to send back a UDP packet showing it can be reached (heartbeat).
-	Defaults to <target-ip>:53 for the UDP target, can be changed with flags
+	Defaults to <target-ip>:6767 for the UDP target, can be changed with flags
 	Example:
 		doodlebob heartbeat 192.168.10.1`,
 	Args: cobra.MinimumNArgs(1), // Ensures at least 1 argument
