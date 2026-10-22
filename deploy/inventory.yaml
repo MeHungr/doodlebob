@@ -22,6 +22,7 @@ all:
         ansible_connection: ssh
         ansible_become: true
         ansible_become_method: sudo
+        ansible_become_password: "Patty321!"
 
     windows:
       hosts:
