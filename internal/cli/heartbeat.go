@@ -18,6 +18,10 @@ var heartbeatCommand = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetIP := args[0]
 
+		if !cmd.Flags().Changed("target") {
+			udpTarget = targetIP
+		}
+
 		// Run the OpenShell function when the command is run
 		err := Heartbeat(udpTarget, targetIP, port, network.LocalIP().IP.To4().String(), responsePort)
 		if err != nil {
@@ -33,6 +37,4 @@ func init() {
 
 	// Add a flag for udp target and udp port
 	heartbeatCommand.Flags().StringVarP(&responsePort, "response-port", "r", "8080", "Specify a response port for the UDP packet (not the target of the command)")
-	heartbeatCommand.Flags().StringVarP(&udpTarget, "target", "t", udpTarget, "Specify a destination host for the UDP packet (not the target of the command)")
-	heartbeatCommand.Flags().StringVarP(&port, "port", "p", "53", "Specify a destination port for the UDP packet (not the target of the command)")
 }

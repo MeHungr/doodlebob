@@ -33,6 +33,6 @@ func Execute() {
 }
 
 func init() {
+	rootCmd.PersistentFlags().StringVarP(&udpTarget, "target", "t", "", "Specify the UDP destination host")
+	rootCmd.PersistentFlags().StringVarP(&port, "port", "p", "53", "Specify a destination port for the UDP packet (not the target of the command)")
 }
-
-
