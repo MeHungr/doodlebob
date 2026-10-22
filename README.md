@@ -20,7 +20,7 @@ Because these packets are intercepted via packet capture before they reach the k
 
 The project is organized into the following components:
 
-* **`bin/`** – Contains compiled binaries (linux_amd64 is currently Debian-based).
+* **`bin/`** – Contains compiled binaries (linux_amd64 is currently Arch-based).
 * **`cmd/`** – Main entry points for the application binaries.
 * **`deploy/`** – Ansible deployment playbooks and target configurations.
 * **`internal/`** – Private application frameworks and operational modules.

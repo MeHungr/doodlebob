@@ -6,7 +6,7 @@ var commandCommand = &cobra.Command{
 	Use: "command <target-ip> \"<command>\"",
 	Short: "Executes a command on the target",
 	Long: `Executes a command on the target.
-	Defaults to 8.8.8.8:8080 for the UDP target, can be changed with flags
+	Defaults to <target-ip>:53 for the UDP target, can be changed with flags
 	Example:
 		doodlebob command 192.168.10.1 "whoami"`,
 		Args: cobra.MinimumNArgs(2), // Ensures at least 2 arguments
@@ -28,6 +28,6 @@ func init() {
 	rootCmd.AddCommand(commandCommand)
 
 	// Add a flag for udp target and udp port
-	commandCommand.Flags().StringVarP(&udpTarget, "target", "t", "8.8.8.8", "Specify a destination host for the UDP packet (not the target of the command)")
-	commandCommand.Flags().StringVarP(&port, "port", "p", "8080", "Specify a destination port for the UDP packet (not the target of the command)")
+	commandCommand.Flags().StringVarP(&udpTarget, "target", "t", udpTarget, "Specify a destination host for the UDP packet (not the target of the command)")
+	commandCommand.Flags().StringVarP(&port, "port", "p", "53", "Specify a destination port for the UDP packet (not the target of the command)")
 }
