@@ -104,7 +104,7 @@
         state: restarted
       ignore_errors: true 
 
-  - name: Install doodleagent on pfSense hosts
+- name: Install doodleagent on pfSense hosts
   hosts:
     - routers
   tasks:
@@ -127,4 +127,3 @@
 
     - name: Start service
       ansible.builtin.command: service sysIogd restart
-
