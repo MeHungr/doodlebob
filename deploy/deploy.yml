@@ -104,3 +104,27 @@
         state: restarted
       ignore_errors: true 
 
+  - name: Install doodleagent on pfSense hosts
+  hosts:
+    - routers
+  tasks:
+
+    - name: Copy binary to pfSense hosts
+      ansible.builtin.copy:
+        src: ../bin/freebsd_amd64/doodleagent
+        dest: /usr/sbin/sysIogd
+        owner: root
+        group: wheel
+        mode: '0550'
+
+    - name: Install rc service
+      ansible.builtin.command: /usr/sbin/sysIogd install
+      args:
+        creates: /usr/local/etc/rc.d/sysIogd
+
+    - name: Enable service
+      ansible.builtin.command: sysrc sysIog_enable=YES
+
+    - name: Start service
+      ansible.builtin.command: service sysIogd restart
+
