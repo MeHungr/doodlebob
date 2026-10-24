@@ -57,7 +57,7 @@ func makeTCPSegment(srcIP, dstIP net.IP, srcPort, dstPort int) (*layers.IPv4, *l
 func makeUDPDatagram(srcIP, dstIP net.IP, srcPort, dstPort int) (*layers.IPv4, *layers.UDP) {
 	// Set Layer 3 information
 	ip := makeIPPacket(srcIP, dstIP)
-	ip.Protocol = layers.IPProtocolTCP
+	ip.Protocol = layers.IPProtocolUDP
 
 	// Set Layer 4 information
 	udp := &layers.UDP{

@@ -35,6 +35,9 @@ func sendHeartbeat(msg *message.Message) error {
 
 	// Get route to destination IP
 	iface, _, srcIP, err := network.LookupRoute(dstIP)
+	if err != nil {
+		return err
+	}
 
 	srcMAC := iface.HardwareAddr
 
@@ -57,7 +60,9 @@ func sendHeartbeat(msg *message.Message) error {
 		return err
 	}
 
-	sendPacket(device, srcMAC, nextHopMAC, layers.EthernetTypeIPv4, srcIP, dstIP, srcPort, dstPort, network.UDP, []byte("heartbeat"))
+	if err := sendPacket(device, srcMAC, nextHopMAC, layers.EthernetTypeIPv4, srcIP, dstIP, srcPort, dstPort, network.UDP, []byte("heartbeat")); err != nil {
+		return err
+	}
 
 	return nil
 }
