@@ -2,7 +2,7 @@
 
 ### **Author:** Dylan Weber (dmw7938@rit.edu)
 
-doodlebob is a Command and Control (C2) framework built in Go that utilizes `gopacket` and `pcap` to achieve Remote Code Execution (RCE) on both Windows and Linux platforms.
+doodlebob is a Command and Control (C2) framework built in Go that utilizes `gopacket` and `pcap` to achieve Remote Code Execution (RCE) on Windows, Linux, and FreeBSD platforms.
 
 <img width="500" height="500" alt="DoodleBob Character" src="https://github.com/user-attachments/assets/20ef17e6-5ffc-4df1-adac-ad013d2b3714" />
 
@@ -61,6 +61,7 @@ This automated flow handles:
 
 ## Usage
 
+**Note: for pfSense clients, you must use the WAN IP address for all doodlebob commands**
 For control hosts running Debian-based Linux, provision the operational CLI to your local system paths using the included pipeline configuration:
 
 ```bash
