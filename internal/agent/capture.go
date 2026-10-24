@@ -4,7 +4,7 @@ package agent
 import (
 	"fmt"
 
-	"github.com/MeHungr/doodlebob/internal/network"
+	"github.com/MeHungr/doodlebob/pkg/network"
 	"github.com/google/gopacket/pcap"
 )
 

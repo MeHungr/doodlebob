@@ -11,7 +11,7 @@ import (
 	"strconv"
 
 	"github.com/MeHungr/doodlebob/internal/message"
-	"github.com/MeHungr/doodlebob/internal/network"
+	"github.com/MeHungr/doodlebob/pkg/network"
 )
 
 // prependHeaderAndSend adds the magic header to the beginning of the message and sends it
@@ -211,10 +211,10 @@ func SendCommand(udpTarget, targetIP, port string, cmd string) error {
 
 	// Create message struct
 	msg := &message.Message{
-		Type:  message.Command,
-		DstIP: targetIP,
+		Type:    message.Command,
+		DstIP:   targetIP,
 		DstPort: port,
-		Data:  cmd,
+		Data:    cmd,
 	}
 
 	// Add the magic header and send the message. Returns any errors from this function

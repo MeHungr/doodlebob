@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"github.com/MeHungr/doodlebob/internal/network"
+	"github.com/MeHungr/doodlebob/pkg/network"
 	"github.com/spf13/cobra"
 )
 

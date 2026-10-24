@@ -135,6 +135,36 @@ func CreatePacket(
 	return buf.Bytes(), nil
 }
 
+// SendPacket sends a packet across the wire
+func SendPacket(
+	device *pcap.Interface,
+	srcMAC, dstMAC net.HardwareAddr,
+	etherType layers.EthernetType, srcIP, dstIP net.IP,
+	srcPort, dstPort int,
+	l4proto L4Proto,
+	packetData []byte,
+) error {
+	// Open a handle to pcap interface
+	handle, err := pcap.OpenLive(device.Name, 65535, false, pcap.BlockForever)
+	if err != nil {
+		return fmt.Errorf("opening pcap device %s: %w", device.Name, err)
+	}
+
+	// Create packet
+	packet, err := CreatePacket(srcMAC, dstMAC, etherType, srcIP, dstIP, srcPort, dstPort, l4proto, packetData)
+	if err != nil {
+		return fmt.Errorf("creating packet: %w", err)
+	}
+
+	// Send packet
+	if err := handle.WritePacketData(packet); err != nil {
+		return fmt.Errorf("writing raw packet data to wire: %w", err)
+	}
+
+	// Success
+	return nil
+}
+
 // ResolveARP resolves a next-hop IPv4 address to its MAC address
 func ResolveARP(ctx context.Context, device *pcap.Interface, srcMAC net.HardwareAddr, srcIP, nextHop net.IP) (net.HardwareAddr, error) {
 	src4 := srcIP.To4()   // Source IP in IPv4

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/MeHungr/doodlebob/internal/message"
-	"github.com/MeHungr/doodlebob/internal/network"
+	"github.com/MeHungr/doodlebob/pkg/network"
 	"github.com/MeHungr/doodlebob/pkg/executor"
 	"github.com/google/gopacket/layers"
 )
@@ -60,7 +60,7 @@ func sendHeartbeat(msg *message.Message) error {
 		return err
 	}
 
-	if err := sendPacket(device, srcMAC, nextHopMAC, layers.EthernetTypeIPv4, srcIP, dstIP, srcPort, dstPort, network.UDP, []byte("heartbeat")); err != nil {
+	if err := network.SendPacket(device, srcMAC, nextHopMAC, layers.EthernetTypeIPv4, srcIP, dstIP, srcPort, dstPort, network.UDP, []byte("heartbeat")); err != nil {
 		return err
 	}
 
