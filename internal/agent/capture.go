@@ -55,7 +55,14 @@ func ChooseInterface() (*pcap.Interface, error) {
 
 // ListenDefaultInterface calls Listen() using the default network interface
 func ListenDefaultInterface() (*pcap.Handle, error) {
-	handle, err := Listen(network.GetNetworkInterface(network.LocalIP().IP))
+	// Get default interface
+	device, err := network.GetNetworkInterface(network.LocalIP().IP)
+	if err != nil {
+		return nil, err
+	}
+
+	// Listen on default interface
+	handle, err := Listen(device)
 	if err != nil {
 		return nil, fmt.Errorf("default interface: %w", err)
 	}
