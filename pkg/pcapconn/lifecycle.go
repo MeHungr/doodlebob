@@ -3,6 +3,7 @@ package pcapconn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 
@@ -23,6 +24,15 @@ type ownedConn struct {
 	mu        sync.Mutex
 	workerErr error
 	closeErr  error
+}
+
+// CloseWrite sends FIN while leaving the packet workers alive to finish teardown.
+func (c *ownedConn) CloseWrite() error {
+	conn, ok := c.Conn.(interface{ CloseWrite() error })
+	if !ok {
+		return fmt.Errorf("underlying connection does not support CloseWrite")
+	}
+	return conn.CloseWrite()
 }
 
 func (c *ownedConn) workerFailed(err error) {

@@ -3,7 +3,6 @@ package pcapconn
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -25,7 +24,6 @@ func StartIngressWorker(ctx context.Context, handle *pcap.Handle, linkEP *channe
 			return fmt.Errorf("capture packet: %w", err)
 		}
 		if info.CaptureLength < info.Length {
-			log.Printf("pcapconn ingress: dropping truncated packet captured=%d original=%d", info.CaptureLength, info.Length)
 			continue
 		}
 		packet := gopacket.NewPacket(data, handle.LinkType(), gopacket.Default)
@@ -35,17 +33,6 @@ func StartIngressWorker(ctx context.Context, handle *pcap.Handle, linkEP *channe
 			continue
 		}
 		ip, _ := ipLayer.(*layers.IPv4)
-		if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
-			tcp := tcpLayer.(*layers.TCP)
-			if tcp.SYN || tcp.RST || tcp.FIN {
-				log.Printf("pcapconn ingress: %s:%d -> %s:%d SYN=%t ACK=%t RST=%t FIN=%t seq=%d ack=%d checksum=0x%04x bytes=%d",
-					ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort,
-					tcp.SYN, tcp.ACK, tcp.RST, tcp.FIN, tcp.Seq, tcp.Ack, tcp.Checksum, len(ip.Contents)+len(ip.Payload))
-			}
-		}
-		if decodeErr := packet.ErrorLayer(); decodeErr != nil {
-			log.Printf("pcapconn ingress: packet decode error: %v", decodeErr.Error())
-		}
 
 		// Inject raw IP network bytes directly into gVisor's link layer handler
 		pktBuffer := stack.NewPacketBuffer(stack.PacketBufferOptions{
