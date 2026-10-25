@@ -73,6 +73,7 @@ func runPcapShell(cmd *exec.Cmd, conn net.Conn) error {
 
 // OpenPcapReverseShell opens an OS agnostic reverse shell to a listening host
 // This uses the pcapconn implementation of net.Conn
+// This shell is not bound to the host's kernel networking stack, and ignores host-based network filtering
 func OpenPcapReverseShell(msg *message.Message) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
