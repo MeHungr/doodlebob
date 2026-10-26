@@ -23,7 +23,7 @@ func ExecuteCommand(command string, timeout *time.Duration) (output string, retu
 	// Determine shell
 	shell := getShell()
 	// Determine shell args and append command
-	args := getShellArgs(command)
+	args := getShellCmdArgs(command)
 
 	// If the command has a timeout duration, cancel the command's execution after that duration
 	if timeout != nil {

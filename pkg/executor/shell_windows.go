@@ -12,7 +12,12 @@ func getShell() (shell string) {
 	return powershell
 }
 
-// getShellArgs returns the arguments for command execution with the shell
-func getShellArgs(command string) []string {
+// getShellCmdArgs returns the arguments for command execution with the shell
+func getShellCmdArgs(command string) []string {
 	return []string{"-WindowStyle", "Hidden", "-Command", command}
+}
+
+// getShellInteractiveArgs returns the arguments for interactive shells with the shell
+func getShellInteractiveArgs() []string {
+	return []string{}
 }

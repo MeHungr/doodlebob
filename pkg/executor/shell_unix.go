@@ -19,7 +19,12 @@ func getShell() (shell string) {
 	return
 }
 
-// getShellArgs returns the arguments for command execution with the shell
-func getShellArgs(command string) []string {
+// getShellCmdArgs returns the arguments for command execution with the shell
+func getShellCmdArgs(command string) []string {
 	return []string{"-c", command}
+}
+
+// getShellInteractiveArgs returns the arguments for interactive shells with the shell
+func getShellInteractiveArgs() []string {
+	return []string{"-i"}
 }
