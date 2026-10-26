@@ -10,7 +10,7 @@ import (
 	"strconv"
 )
 
-var RULE_FORMAT string = "doodlbob-Isolate-%s"
+var RULE_FORMAT string = "doodlbob-Isolate-%d"
 
 type WindowsIsolator struct{}
 

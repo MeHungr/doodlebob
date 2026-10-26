@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var RULE_FORMAT string = "doodlbob-Isolate-%s"
+const RULE_FORMAT = "doodlbob-Isolate-%d"
 
 type LinuxIsolator struct{}
 
@@ -28,25 +28,33 @@ func NewIsolator() FlowIsolator { return &LinuxIsolator{} }
 // 	return nil
 // }
 
-// Isolate blocks traffic with the RST flag out of a source port on the firewall
-// This allows the pcap interface to send and receive traffic
-// Without the kernel interfering with RST packets
-// An outbound rule is generally more stealthy than inbound
+// Isolate blocks outgoing TCP RST packets originating from srcPort.
+// This prevents the kernel from interfering with TCP traffic
+// managed through a raw packet interface.
 func (l *LinuxIsolator) Isolate(ctx context.Context, srcPort int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if srcPort < 1 || srcPort > 65535 {
+		return fmt.Errorf("invalid source port: %d", srcPort)
+	}
+
 	nft, err := nftables.New()
 	if err != nil {
 		return fmt.Errorf("failed to connect to nftables: %w", err)
 	}
 	defer nft.CloseLasting()
 
-	// 1. Create a dedicated table to isolate our rules safely
+	// Create a dedicated dual-stack table.
 	tableName := fmt.Sprintf(RULE_FORMAT, srcPort)
+
 	table := nft.AddTable(&nftables.Table{
-		Family: nftables.TableFamilyINet, // Dual-stack IPv4/IPv6 support
+		Family: nftables.TableFamilyINet,
 		Name:   tableName,
 	})
 
-	// 2. Add an Output chain hooked into the host egress path
+	// Hook into locally generated outbound traffic.
 	chain := nft.AddChain(&nftables.Chain{
 		Name:     "output",
 		Table:    table,
@@ -55,95 +63,107 @@ func (l *LinuxIsolator) Isolate(ctx context.Context, srcPort int) error {
 		Priority: nftables.ChainPriorityFilter,
 	})
 
-	// Construct rule expressions to find matching TCP RST packets
-	var expressions []expr.Any
+	expressions := []expr.Any{
+		// Match TCP for IPv4 and IPv6.
+		&expr.Meta{
+			Key:      expr.MetaKeyL4PROTO,
+			Register: 1,
+		},
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: 1,
+			Data:     []byte{unix.IPPROTO_TCP},
+		},
 
-	// [ Payload: match TCP protocol ]
-	// ip protocol tcp (matches transport protocol in the IP header)
-	expressions = append(expressions, &expr.Payload{
-		DestRegister: 1,
-		Base:         expr.PayloadBaseNetworkHeader,
-		Offset:       9, // Protocol field in IPv4 header
-		Len:          1,
-	})
-	expressions = append(expressions, &expr.Cmp{
-		Op:       expr.CmpOpEq,
-		Register: 1,
-		Data:     []byte{unix.IPPROTO_TCP},
-	})
+		// Match TCP source port.
+		&expr.Payload{
+			DestRegister: 1,
+			Base:         expr.PayloadBaseTransportHeader,
+			Offset:       0,
+			Len:          2,
+		},
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: 1,
+			Data:     binaryutil.BigEndian.PutUint16(uint16(srcPort)),
+		},
 
-	// [ Payload: match local source port ]
-	// tcp sport <srcPort>
-	expressions = append(expressions, &expr.Payload{
-		DestRegister: 1,
-		Base:         expr.PayloadBaseTransportHeader,
-		Offset:       0, // Source Port field in TCP header
-		Len:          2,
-	})
-	expressions = append(expressions, &expr.Cmp{
-		Op:       expr.CmpOpEq,
-		Register: 1,
-		Data:     binaryutil.BigEndian.PutUint16(uint16(srcPort)),
-	})
+		// Read the TCP flags byte.
+		&expr.Payload{
+			DestRegister: 1,
+			Base:         expr.PayloadBaseTransportHeader,
+			Offset:       13,
+			Len:          1,
+		},
 
-	// [ Payload: match TCP RST flag ]
-	// tcp flags & rst == rst
-	expressions = append(expressions, &expr.Payload{
-		DestRegister: 1,
-		Base:         expr.PayloadBaseTransportHeader,
-		Offset:       13, // Flags field in TCP header
-		Len:          1,
-	})
-	expressions = append(expressions, &expr.Bitwise{
-		SourceRegister: 1,
-		DestRegister:   1,
-		Len:            1,
-		Mask:           []byte{0x04}, // RST flag bit mask
-		Xor:            []byte{0x00},
-	})
-	expressions = append(expressions, &expr.Cmp{
-		Op:       expr.CmpOpEq,
-		Register: 1,
-		Data:     []byte{0x04}, // Must equal 0x04 (RST set)
-	})
+		// Mask all flags except RST (0x04).
+		&expr.Bitwise{
+			SourceRegister: 1,
+			DestRegister:   1,
+			Len:            1,
+			Mask:           []byte{0x04},
+			Xor:            []byte{0x00},
+		},
 
-	// [ Action: Drop the packet ]
-	expressions = append(expressions, &expr.Verdict{
-		Kind: expr.VerdictDrop,
-	})
+		// Match packets with RST set.
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: 1,
+			Data:     []byte{0x04},
+		},
 
-	// Inject the rule and atomic flush into the kernel
+		// Drop matching packets.
+		&expr.Verdict{
+			Kind: expr.VerdictDrop,
+		},
+	}
+
 	nft.AddRule(&nftables.Rule{
 		Table: table,
 		Chain: chain,
 		Exprs: expressions,
 	})
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	if err := nft.Flush(); err != nil {
-		return fmt.Errorf("failed to flush nftables isolation rule: %w", err)
+		return fmt.Errorf("failed to install nftables isolation rule: %w", err)
 	}
 
 	return nil
 }
 
-// Release removes the firewall rule set by Isolate
+// Release removes the isolation table and its associated rules.
 func (l *LinuxIsolator) Release(ctx context.Context, srcPort int) error {
-	c, err := nftables.New()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if srcPort < 1 || srcPort > 65535 {
+		return fmt.Errorf("invalid source port: %d", srcPort)
+	}
+
+	nft, err := nftables.New()
 	if err != nil {
 		return fmt.Errorf("failed to connect to nftables: %w", err)
 	}
-	defer c.CloseLasting()
+	defer nft.CloseLasting()
 
-	// Deleting the table entirely handles tearing down the chains and inner expressions atomically
 	tableName := fmt.Sprintf(RULE_FORMAT, srcPort)
-	c.DelTable(&nftables.Table{
+
+	nft.DelTable(&nftables.Table{
 		Family: nftables.TableFamilyINet,
 		Name:   tableName,
 	})
 
-	// Flush the removal transaction to the kernel state table
-	if err := c.Flush(); err != nil {
-		return fmt.Errorf("failed to tear down nftables isolation table: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := nft.Flush(); err != nil {
+		return fmt.Errorf("failed to remove nftables isolation table: %w", err)
 	}
 
 	return nil
