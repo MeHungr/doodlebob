@@ -278,10 +278,8 @@ func (f *FreeBSDIsolator) ensurePFReady(ctx context.Context) error {
 	// doodlebob-Isolate/2500
 	//
 	// are evaluated through this rule.
-	dispatch := fmt.Sprintf(
-		"anchor \"%s/*\"\n",
-		MainAnchor,
-	)
+	// Anchor paths are relative to the containing anchor.
+	dispatch := "anchor \"*\"\n"
 
 	if _, err := runPFCTL(
 		ctx,
