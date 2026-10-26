@@ -50,6 +50,6 @@ var shellCommand = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(shellCommand)
 
-	shellCommand.Flags().BoolVarP(&pty, "use-pty", "P", false, "Spawn shell with a pseudo-terminal")
+	shellCommand.Flags().BoolVarP(&pty, "use-pty", "P", false, "Spawn shell with a pseudo-terminal (only use this on Linux and FreeBSD")
 	shellCommand.Flags().BoolVarP(&native, "native", "n", false, "Spawn shell using a raw TCP socket")
 }

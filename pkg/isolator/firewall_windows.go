@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-var RULE_FORMAT string = "doodlbob-Isolate-%d"
+var RULE_FORMAT string = "doodlebob-Isolate-%d"
 
 type WindowsIsolator struct{}
 

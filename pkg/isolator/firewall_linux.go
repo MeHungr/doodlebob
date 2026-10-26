@@ -13,20 +13,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const RULE_FORMAT = "doodlbob-Isolate-%d"
+const RULE_FORMAT = "doodlebob-Isolate-%d"
 
 type LinuxIsolator struct{}
 
 func NewIsolator() FlowIsolator { return &LinuxIsolator{} }
-
-// func (l *LinuxIsolator) Isolate(ctx context.Context, srcPort int) error {
-// 	portStr := strconv.Itoa(srcPort)
-// 	cmd := exec.CommandContext(ctx, "iptables", "-A", "OUTPUT", "-p", "tcp", "--sport", portStr, "--tcp-flags", "RST", "RST", "-j", "DROP")
-// 	if err := cmd.Run(); err != nil {
-// 		return fmt.Errorf("failed to append iptables rule: %w", err)
-// 	}
-// 	return nil
-// }
 
 // Isolate blocks outgoing TCP RST packets originating from srcPort.
 // This prevents the kernel from interfering with TCP traffic
@@ -168,9 +159,3 @@ func (l *LinuxIsolator) Release(ctx context.Context, srcPort int) error {
 
 	return nil
 }
-
-// func (l *LinuxIsolator) Release(ctx context.Context, srcPort int) error {
-// 	portStr := strconv.Itoa(srcPort)
-// 	cmd := exec.CommandContext(ctx, "iptables", "-D", "OUTPUT", "-p", "tcp", "--sport", portStr, "--tcp-flags", "RST", "RST", "-j", "DROP")
-// 	return cmd.Run()
-// }
