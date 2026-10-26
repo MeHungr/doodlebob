@@ -53,28 +53,63 @@ func (c *ownedConn) workerFailed(err error) {
 
 func (c *ownedConn) Close() error {
 	c.once.Do(func() {
+		// Stop packet-processing workers.
 		c.cancel()
+
+		// Close the application-facing TCP connection.
 		if c.Conn != nil {
-			c.closeErr = c.Conn.Close()
+			c.closeErr = errors.Join(
+				c.closeErr,
+				c.Conn.Close(),
+			)
 		}
+
+		// Stop gVisor's networking stack.
 		c.stack.Close()
+
+		// Wait for ingress and egress workers to exit.
+		// Assumes ReadPacketData is bounded by the
+		// configured capture timeout.
 		c.workers.Wait()
+
+		// Release networking resources.
 		c.link.Close()
 		c.handle.Close()
-		c.stack.Wait()
-		c.mu.Lock()
-		c.closeErr = errors.Join(c.closeErr, c.workerErr)
-		c.mu.Unlock()
-	})
 
-	// Clean up host firewall modifications after network workers have ceased processing.
-	if c.isolator != nil {
-		releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		if err := c.isolator.Release(releaseCtx, c.srcPort); err != nil {
-			c.closeErr = errors.Join(c.closeErr, fmt.Errorf("failed to release flow isolator: %w", err))
+		// Wait for gVisor cleanup.
+		c.stack.Wait()
+
+		// Remove firewall isolation.
+		if c.isolator != nil {
+			releaseCtx, cancel := context.WithTimeout(
+				context.Background(),
+				2*time.Second,
+			)
+
+			err := c.isolator.Release(
+				releaseCtx,
+				c.srcPort,
+			)
+			cancel()
+
+			if err != nil {
+				c.closeErr = errors.Join(
+					c.closeErr,
+					fmt.Errorf(
+						"failed to release flow isolator: %w",
+						err,
+					),
+				)
+			}
 		}
-		cancel()
-	}
+
+		// Collect worker failures.
+		c.mu.Lock()
+		workerErr := c.workerErr
+		c.mu.Unlock()
+
+		c.closeErr = errors.Join(c.closeErr, workerErr)
+	})
 
 	return c.closeErr
 }
