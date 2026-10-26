@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
+	"github.com/MeHungr/doodlebob/pkg/isolator"
 	"github.com/google/gopacket/pcap"
 	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
@@ -24,6 +26,8 @@ type ownedConn struct {
 	mu        sync.Mutex
 	workerErr error
 	closeErr  error
+	isolator  isolator.FlowIsolator
+	srcPort   int
 }
 
 // CloseWrite sends FIN while leaving the packet workers alive to finish teardown.
@@ -62,5 +66,15 @@ func (c *ownedConn) Close() error {
 		c.closeErr = errors.Join(c.closeErr, c.workerErr)
 		c.mu.Unlock()
 	})
+
+	// Clean up host firewall modifications after network workers have ceased processing.
+	if c.isolator != nil {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := c.isolator.Release(releaseCtx, c.srcPort); err != nil {
+			c.closeErr = errors.Join(c.closeErr, fmt.Errorf("failed to release flow isolator: %w", err))
+		}
+		cancel()
+	}
+
 	return c.closeErr
 }

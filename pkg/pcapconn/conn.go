@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/MeHungr/doodlebob/pkg/isolator"
 	"github.com/MeHungr/doodlebob/pkg/network"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
@@ -88,7 +89,14 @@ func Dial(ctx context.Context, device *pcap.Interface, srcPort int, targetIP str
 	})
 
 	workerCtx, cancel := context.WithCancel(context.Background())
-	owned := &ownedConn{stack: s, link: linkEP, handle: handle, cancel: cancel}
+
+	// Block the port that we are establishing a connection on so the kernel doesn't interfere
+	isolator := isolator.NewIsolator()
+	if err := isolator.Isolate(ctx, srcPort); err != nil {
+		return nil, fmt.Errorf("failed to setup platform host protection: %w", err)
+	}
+
+	owned := &ownedConn{stack: s, link: linkEP, handle: handle, cancel: cancel, isolator: isolator, srcPort: srcPort}
 	success := false
 	defer func() {
 		if !success {
