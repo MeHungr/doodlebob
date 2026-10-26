@@ -149,11 +149,14 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 
 	fmt.Printf("[+] Target connected from %s!\nOpening doodlebob terminal >:3\n", conn.RemoteAddr().String())
 
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		return err
+	switch shellType {
+	case message.ShellNativePty, message.ShellPcapPty:
+		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+		if err != nil {
+			return err
+		}
+		defer term.Restore(int(os.Stdin.Fd()), oldState)
 	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
 	// Channel to cleanly block until the session terminates
 	done := make(chan struct{})
