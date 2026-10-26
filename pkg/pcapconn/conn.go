@@ -96,7 +96,7 @@ func Dial(ctx context.Context, device *pcap.Interface, srcPort int, targetIP str
 		return nil, fmt.Errorf("failed to setup platform host protection: %w", err)
 	}
 
-	owned := &ownedConn{stack: s, link: linkEP, handle: handle, cancel: cancel, isolator: isolator, srcPort: srcPort}
+	owned := &ownedConn{stack: s, link: linkEP, handle: handle, cancel: cancel, isolator: isolator, srcPort: targetPort}
 	success := false
 	defer func() {
 		if !success {
