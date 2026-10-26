@@ -63,7 +63,7 @@ func runPcapShell(cmd *exec.Cmd, conn net.Conn) error {
 	// Network -> PTY (shell input)
 	go func() {
 		defer close(inputDone)
-		_, _ = io.Copy(ptmx, conn)
+		_, _ = io.Copy(os.Stdin, ptmx)
 	}()
 
 	// PTY -> Network (shell output)

