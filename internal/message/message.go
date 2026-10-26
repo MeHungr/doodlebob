@@ -7,11 +7,16 @@ var MagicHeader = []byte{0x44, 0x4F, 0x4F, 0x44, 0x4C, 0x45} // "DOODLE"
 // Define custom type for Message Type field
 type MessageType string
 
+type ShellType MessageType
+
 // The custom values
 const (
 	Command MessageType = "command"
 	Heartbeat MessageType = "heartbeat"
-	Shell MessageType = "shell"
+	ShellPcapPty ShellType = "pshell-pty"
+	ShellPcapPipe ShellType = "pshell-pipe"
+	ShellNativePty ShellType = "nshell-pty"
+	ShellNativePipe ShellType = "nshell-pipe"
 )
 
 // Message struct contains information sent between client and host

