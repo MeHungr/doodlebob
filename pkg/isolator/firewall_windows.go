@@ -69,7 +69,7 @@ func (w *WindowsIsolator) Isolate(ctx context.Context, srcPort int) error {
 	}
 
 	portStr := strconv.Itoa(srcPort)
-	ruleName := fmt.Sprintf(RULE_FORMAT, portStr)
+	ruleName := fmt.Sprintf(RULE_FORMAT, srcPort)
 
 	// Block outbound RST packets by targeting TCP on the specific local source port
 	cmd := exec.CommandContext(
@@ -96,7 +96,7 @@ func (w *WindowsIsolator) Isolate(ctx context.Context, srcPort int) error {
 // Release removes the firewall rule set by Isolate
 func (w *WindowsIsolator) Release(ctx context.Context, srcPort int) error {
 	portStr := strconv.Itoa(srcPort)
-	ruleName := fmt.Sprintf(RULE_FORMAT, portStr)
+	ruleName := fmt.Sprintf(RULE_FORMAT, srcPort)
 
 	cmd := exec.CommandContext(ctx, "netsh", "advfirewall", "firewall", "delete", "rule", "name="+ruleName)
 
