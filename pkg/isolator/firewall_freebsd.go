@@ -4,152 +4,376 @@
 package isolator
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
-	"strconv"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
-	// Root anchor matching all user isolation containers
-	MainAnchor = "doodlebob-Isolate"
-	// Sub-anchor per individual isolated port
+	MainAnchor      = "doodlebob-Isolate"
 	SubAnchorFormat = "doodlebob-Isolate/%d"
+
+	pfConfigPath = "/etc/pf.conf"
+)
+
+var (
+	pfConfigMu sync.Mutex
+
+	anchorDeclaration = `anchor "` + MainAnchor + `"`
+	anchorPattern     = regexp.MustCompile(
+		`(?m)^\s*anchor\s+"?doodlebob-Isolate"?\s*(?:#.*)?$`,
+	)
 )
 
 type FreeBSDIsolator struct {
-	initOnce sync.Once
-	initErr  error
+	mu sync.Mutex
 }
 
 func NewIsolator() FlowIsolator {
 	return &FreeBSDIsolator{}
 }
 
-func validatePort(srcPort int) error {
-	if srcPort < 1 || srcPort > 65535 {
-		return fmt.Errorf("invalid source port: %d", srcPort)
+func validatePort(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("invalid source port: %d", port)
 	}
 	return nil
 }
 
-func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+func runCommand(
+	ctx context.Context,
+	name string,
+	stdin string,
+	args ...string,
+) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.CombinedOutput()
-}
 
-func runPFCTL(ctx context.Context, rules string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "pfctl", args...)
-	if rules != "" {
-		cmd.Stdin = bytes.NewBufferString(rules)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
 	}
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return output, fmt.Errorf("pfctl %v failed: %w: %s", args, err, strings.TrimSpace(string(output)))
+		return output, fmt.Errorf(
+			"%s %v failed: %w: %s",
+			name,
+			args,
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
+
 	return output, nil
 }
 
-// ensurePFReady guarantees the kernel module is loaded, PF is enabled, and the root anchor is attached
-func (f *FreeBSDIsolator) ensurePFReady(ctx context.Context) error {
-	f.initOnce.Do(func() {
-		// 1. Ensure kernel module is loaded
-		if _, err := runCommand(ctx, "kldload", "pf"); err != nil {
-			// Ignore error if it's already loaded
-			if !strings.Contains(err.Error(), "File exists") && !strings.Contains(err.Error(), "already loaded") {
-				f.initErr = fmt.Errorf("failed to load pf kernel module: %w", err)
-				return
-			}
-		}
-
-		// 2. Check if PF is running
-		infoOut, err := runPFCTL(ctx, "", "-s", "info")
-		if err != nil {
-			f.initErr = fmt.Errorf("failed to check pf status: %w", err)
-			return
-		}
-
-		// 3. Initialize PF with a permissive rule allowing our anchor if disabled
-		if strings.Contains(string(infoOut), "Status: Disabled") {
-			// Pass-all ruleset containing our structural isolation hook
-			baseRules := fmt.Sprintf("anchor %s\npass out all\npass in all\n", MainAnchor)
-			if _, err := runPFCTL(ctx, baseRules, "-f", "-"); err != nil {
-				f.initErr = fmt.Errorf("failed to load initial ruleset: %w", err)
-				return
-			}
-			if _, err := runPFCTL(ctx, "", "-e"); err != nil {
-				f.initErr = fmt.Errorf("failed to enable pf: %w", err)
-				return
-			}
-		} else {
-			// 4. If already enabled, append our root anchor dynamically if it doesn't exist
-			rulesOut, err := runPFCTL(ctx, "", "-s", "rules")
-			if err != nil {
-				f.initErr = fmt.Errorf("failed to read existing rules: %w", err)
-				return
-			}
-			if !strings.Contains(string(rulesOut), fmt.Sprintf("anchor %sall", MainAnchor)) {
-				anchorRule := fmt.Sprintf("anchor %s\n", MainAnchor)
-				// Open parsing and append the root anchor safely to the live ruleset
-				if _, err := runPFCTL(ctx, anchorRule, "-g", "-f", "-"); err != nil {
-					f.initErr = fmt.Errorf("failed to ensure anchor presence in active configuration: %w", err)
-					return
-				}
-			}
-		}
-	})
-
-	return f.initErr
+func runPFCTL(
+	ctx context.Context,
+	stdin string,
+	args ...string,
+) ([]byte, error) {
+	return runCommand(ctx, "pfctl", stdin, args...)
 }
 
-func (f *FreeBSDIsolator) Isolate(ctx context.Context, srcPort int) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := validatePort(srcPort); err != nil {
-		return err
-	}
-	if err := f.ensurePFReady(ctx); err != nil {
-		return fmt.Errorf("pf initialization failed: %w", err)
+// ensurePFModule makes sure /dev/pf is available.
+func ensurePFModule(ctx context.Context) error {
+	if _, err := os.Stat("/dev/pf"); err == nil {
+		return nil
 	}
 
-	anchor := fmt.Sprintf(SubAnchorFormat, srcPort)
-	port := strconv.Itoa(srcPort)
+	_, loadErr := runCommand(ctx, "kldload", "", "pf")
 
-	// 5. Install the source-port-specific RST-blocking rule inside its explicit nested sub-anchor
-	rule := fmt.Sprintf(
-		"block drop out quick proto tcp from any port %s to any flags R/R\n",
-		port,
-	)
-
-	if _, err := runPFCTL(ctx, rule, "-a", anchor, "-f", "-"); err != nil {
-		return fmt.Errorf("failed to install PF isolation rule for port %d: %w", srcPort, err)
+	// Check the actual device rather than relying on kldload's
+	// error message. PF may already be compiled into the kernel.
+	if _, err := os.Stat("/dev/pf"); err != nil {
+		return fmt.Errorf(
+			"PF device unavailable after kldload: %w (load error: %v)",
+			err,
+			loadErr,
+		)
 	}
 
 	return nil
 }
 
-func (f *FreeBSDIsolator) Release(ctx context.Context, srcPort int) error {
+// insertAnchor inserts the anchor before existing filtering rules.
+//
+// PF configuration sections have a defined ordering. Inserting
+// an anchor after pass/block rules can cause parsing failures.
+//
+// This handles ordinary pf.conf configurations; configurations
+// using complex macros, includes, or generated rules may need
+// a dedicated configuration manager.
+func insertAnchor(config string) string {
+	if anchorPattern.MatchString(config) {
+		return config
+	}
+
+	lines := strings.Split(config, "\n")
+
+	// Place the anchor after translation rules but before the
+	// first ordinary filtering rule.
+	insertAt := len(lines)
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "block ") ||
+			strings.HasPrefix(trimmed, "pass ") ||
+			strings.HasPrefix(trimmed, "match ") ||
+			strings.HasPrefix(trimmed, "anchor ") {
+			insertAt = i
+			break
+		}
+	}
+
+	lines = append(lines, "")
+	copy(lines[insertAt+1:], lines[insertAt:])
+	lines[insertAt] = anchorDeclaration
+
+	return strings.Join(lines, "\n")
+}
+
+// installRootAnchor attaches our anchor to the root ruleset.
+//
+// The original configuration is backed up before modification.
+// A temporary configuration is validated before being installed.
+func installRootAnchor(ctx context.Context) error {
+	pfConfigMu.Lock()
+	defer pfConfigMu.Unlock()
+
+	original, err := os.ReadFile(pfConfigPath)
+
+	existed := err == nil
+
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read PF configuration: %w", err)
+	}
+
+	config := string(original)
+
+	if anchorPattern.MatchString(config) {
+		// The file contains our declaration, but the running
+		// ruleset might not. Reload the configuration below.
+	} else {
+		config = insertAnchor(config)
+	}
+
+	// Use a temporary file in the same directory so rename
+	// stays on the same filesystem.
+	tmp, err := os.CreateTemp(
+		filepath.Dir(pfConfigPath),
+		".doodlebob-pf-*.conf",
+	)
+	if err != nil {
+		return fmt.Errorf("create temporary PF config: %w", err)
+	}
+
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+
+	if _, err := tmp.WriteString(config); err != nil {
+		tmp.Close()
+		return err
+	}
+
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	// Validate before touching the active configuration.
+	if _, err := runPFCTL(ctx, "", "-nf", tmpPath); err != nil {
+		return fmt.Errorf("generated PF configuration invalid: %w", err)
+	}
+
+	// Save the original configuration if one exists.
+	if existed && config != string(original) {
+		backup := fmt.Sprintf(
+			"%s.doodlebob.%d.bak",
+			pfConfigPath,
+			time.Now().UnixNano(),
+		)
+
+		if err := os.WriteFile(backup, original, 0600); err != nil {
+			return fmt.Errorf("backup PF configuration: %w", err)
+		}
+	}
+
+	// Install the new configuration on disk.
+	if !existed || config != string(original) {
+		if err := os.Rename(tmpPath, pfConfigPath); err != nil {
+			return fmt.Errorf("install PF configuration: %w", err)
+		}
+	}
+
+	// Activate the root ruleset.
+	if _, err := runPFCTL(ctx, "", "-f", pfConfigPath); err != nil {
+		return fmt.Errorf("activate PF configuration: %w", err)
+	}
+
+	return nil
+}
+
+// rootAnchorAttached checks the active root filter rules.
+func rootAnchorAttached(ctx context.Context) (bool, error) {
+	output, err := runPFCTL(ctx, "", "-sr")
+	if err != nil {
+		return false, err
+	}
+
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+
+		if strings.HasPrefix(line, anchorDeclaration) ||
+			strings.HasPrefix(line, "anchor "+MainAnchor+" ") {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// ensurePFReady initializes the PF subsystem and attaches
+// the application's root anchor when necessary.
+func (f *FreeBSDIsolator) ensurePFReady(ctx context.Context) error {
+	if err := ensurePFModule(ctx); err != nil {
+		return err
+	}
+
+	info, err := runPFCTL(ctx, "", "-s", "info")
+	if err != nil {
+		return fmt.Errorf("check PF status: %w", err)
+	}
+
+	attached, err := rootAnchorAttached(ctx)
+	if err != nil {
+		return fmt.Errorf("check root anchor: %w", err)
+	}
+
+	if !attached {
+		if err := installRootAnchor(ctx); err != nil {
+			return err
+		}
+	}
+
+	// Attach the wildcard dispatcher in the parent anchor.
+	//
+	// Individual subanchors:
+	// doodlebob-Isolate/12345
+	// doodlebob-Isolate/2500
+	//
+	// are evaluated through this rule.
+	dispatch := fmt.Sprintf(
+		"anchor \"%s/*\"\n",
+		MainAnchor,
+	)
+
+	if _, err := runPFCTL(
+		ctx,
+		dispatch,
+		"-a", MainAnchor,
+		"-f", "-",
+	); err != nil {
+		return fmt.Errorf("install PF anchor dispatcher: %w", err)
+	}
+
+	if strings.Contains(string(info), "Status: Disabled") {
+		if _, err := runPFCTL(ctx, "", "-e"); err != nil {
+			return fmt.Errorf("enable PF: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// Isolate blocks outbound TCP RST packets originating from srcPort.
+func (f *FreeBSDIsolator) Isolate(
+	ctx context.Context,
+	srcPort int,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	if err := validatePort(srcPort); err != nil {
 		return err
 	}
 
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if err := f.ensurePFReady(ctx); err != nil {
+		return fmt.Errorf("initialize PF: %w", err)
+	}
+
 	anchor := fmt.Sprintf(SubAnchorFormat, srcPort)
 
-	// 6. Remove only the rule scoped to this specific client port sub-anchor
-	_, err := runPFCTL(ctx, "", "-a", anchor, "-F", "rules")
-	if err != nil {
-		// If the anchor context was already empty/gone, treat it as a success
-		if strings.Contains(err.Error(), "Anchor not found") {
-			return nil
-		}
-		return fmt.Errorf("failed to release PF isolation rule for port %d: %w", srcPort, err)
+	rule := fmt.Sprintf(
+		"block drop out quick proto tcp "+
+			"from any port %d to any flags R/R\n",
+		srcPort,
+	)
+
+	if _, err := runPFCTL(
+		ctx,
+		rule,
+		"-a", anchor,
+		"-f", "-",
+	); err != nil {
+		return fmt.Errorf(
+			"install RST isolation rule for port %d: %w",
+			srcPort,
+			err,
+		)
+	}
+
+	return nil
+}
+
+// Release removes the RST isolation rule for srcPort.
+func (f *FreeBSDIsolator) Release(
+	ctx context.Context,
+	srcPort int,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := validatePort(srcPort); err != nil {
+		return err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	anchor := fmt.Sprintf(SubAnchorFormat, srcPort)
+
+	if _, err := runPFCTL(
+		ctx,
+		"",
+		"-a", anchor,
+		"-F", "rules",
+	); err != nil {
+		return fmt.Errorf(
+			"release RST isolation rule for port %d: %w",
+			srcPort,
+			err,
+		)
 	}
 
 	return nil
