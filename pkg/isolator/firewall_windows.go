@@ -8,15 +8,11 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
-
-	"github.com/tailscale/wf"
 )
 
 var RULE_FORMAT string = "doodlbob-Isolate-%s"
 
-type WindowsIsolator struct {
-	session *wf.Session
-}
+type WindowsIsolator struct{}
 
 func NewIsolator() FlowIsolator { return &WindowsIsolator{} }
 
