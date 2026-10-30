@@ -15,6 +15,7 @@ require (
 
 require (
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
+	github.com/MeHungr/pcapnet v0.0.0-20261028034624-fb3394de84ea // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/go-freebsd/pf v0.0.0-20190318053615-719aae74de40 // indirect
 	github.com/google/btree v1.1.2 // indirect
