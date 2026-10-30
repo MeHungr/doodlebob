@@ -195,7 +195,9 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 			return err
 		}
 		defer func() {
-			_ = term.Restore(int(os.Stdin.Fd()), oldState)
+			if oldState != nil {
+				_ = term.Restore(int(os.Stdin.Fd()), oldState)
+			}
 		}()
 	}
 
@@ -238,19 +240,20 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		}
 	}()
 
-	// FIXED: Self-signaling watchdog wrapper
-	// If the target disconnects cleanly via 'exit', we catch the channel closure here,
-	// find our own process identifier, and programmatically signal an os.Interrupt.
-	// This naturally fires ctx.Done(), restores the raw terminal TTY state, and clean drops you back to your prompt.
+	// FIXED: Force immediate hard execution termination.
+	// If the target disconnects ('done') or we cancel local ('ctx.Done'),
+	// we force-restore raw descriptors right here and violently drop the process back to the host via os.Exit.
 	select {
 	case <-done:
-		p, err := os.FindProcess(os.Getpid())
-		if err == nil {
-			_ = p.Signal(os.Interrupt)
+		if oldState != nil {
+			_ = term.Restore(int(os.Stdin.Fd()), oldState)
 		}
-		// Block briefly to ensure the signal registers and the execution flow passes down into clean defers
-		<-ctx.Done()
+		os.Exit(0)
 	case <-ctx.Done():
+		if oldState != nil {
+			_ = term.Restore(int(os.Stdin.Fd()), oldState)
+		}
+		os.Exit(0)
 	}
 
 	return nil
