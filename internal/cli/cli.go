@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/MeHungr/doodlebob/internal/message"
@@ -125,8 +126,8 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	sessionCtx, cancelSession := context.WithCancel(signalCtx)
 	defer cancelSession()
 
-	setupCtx, cancelSetup := context.WithTimeout(sessionCtx, 10*time.Second)
-	defer cancelSetup()
+	setupCtx, cancelTimeout := context.WithTimeout(sessionCtx, 10*time.Second)
+	defer cancelTimeout()
 
 	pool, err := netip.ParsePrefix("172.16.0.0/16")
 	if err != nil {
@@ -213,35 +214,87 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}
 	defer restoreTerminal()
 
-	// Watch session completion to force socket breakdown on manual cancel (Ctrl+C)
+	// Ensure background closures break network operations
 	go func() {
 		<-sessionCtx.Done()
 		_ = conn.Close()
 	}()
 
-	// Stdin → remote pump loop
+	// Channel to cleanly signal the termination of the entire interactive session
+	sessionDone := make(chan struct{})
+
+	// Loop 1: Remote TCP Connection -> Local Standard Output (Synchronous Pump)
 	go func() {
-		// We stream straight to the socket. When conn closes, this writes an error or returns,
-		// but the underlying os.Stdin read syscall will stay stuck in the kernel thread.
-		_, _ = io.Copy(conn, os.Stdin)
+		_, _ = io.Copy(os.Stdout, conn)
+		close(sessionDone) // The remote host closed the session! Unblock the main stream immediately.
 	}()
 
-	// Remote → stdout pump loop
-	// This loop drives the exit sequence.
-	_, _ = io.Copy(os.Stdout, conn)
+	// Loop 2: Non-blocking Local Stdin -> Remote TCP Connection (Select/FdSet Driven)
+	go func() {
+		defer cancelSession()
 
-	// --- EXIT SEQUENCING TRIGGERED BY 'exit' ---
-	// 1. Immediately drop back into cooked mode so terminal behaves normally
+		fd := int(os.Stdin.Fd())
+		// Set standard input to non-blocking mode at the OS level
+		if err := syscall.SetNonblock(fd, true); err != nil {
+			return
+		}
+		defer func() { _ = syscall.SetNonblock(fd, false) }()
+
+		buf := make([]byte, 1024)
+
+		for {
+			select {
+			case <-sessionDone:
+				return
+			case <-sessionCtx.Done():
+				return
+			default:
+				// Build a file descriptor set for low-level monitoring
+				fdSet := &syscall.FdSet{}
+				fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+
+				// Small polling timeout (50ms) ensures we frequently check the context channels
+				timeout := &syscall.Timeval{Usec: 50000}
+
+				// Check if Stdin is ready to be read without blocking the system thread
+				nReady, err := syscall.Select(fd+1, fdSet, nil, nil, timeout)
+				if err != nil {
+					if err == syscall.EINTR {
+						continue
+					}
+					return
+				}
+
+				if nReady > 0 {
+					n, err := syscall.Read(fd, buf)
+					if n > 0 {
+						_, writeErr := conn.Write(buf[:n])
+						if writeErr != nil {
+							return
+						}
+					}
+					if err != nil {
+						if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
+							continue
+						}
+						return
+					}
+				}
+			}
+		}
+	}()
+
+	// Wait for the session to finish (Remote typing exit triggers sessionDone)
+	<-sessionDone
+
+	// --- EXPLICIT TEARDOWN SEQUENCE ---
 	restoreTerminal()
 	fmt.Print("\r\n[-] Target disconnected.\r\n")
 
-	// 2. Safely tell the custom gVisor networking layer to release the peer session
+	// Disconnect the pcapnet session allocation pool
 	disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 1*time.Second)
 	_ = listener.DisconnectPeer(disconnectCtx, res.peer)
 	cancelDisconnect()
-
-	// 3. FORCE EXIT: Obliterate the blocked os.Stdin thread and drop back to host terminal prompt
-	os.Exit(0)
 
 	return nil
 }
