@@ -120,15 +120,19 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}
 
 	// ========= PCAP TCP STACK ==========
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// Derive our session context from the global signal context
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	setupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	sessionCtx, cancelSession := context.WithCancel(signalCtx)
+	defer cancelSession()
+
+	setupCtx, cancelSetup := context.WithTimeout(sessionCtx, 10*time.Second)
+	defer cancelSetup()
 
 	pool, err := netip.ParsePrefix("172.16.0.0/16")
 	if err != nil {
-		return fmt.Errorf("invalid -subnet: %w", err)
+		return fmt.Errorf("invalid \"-subnet:\" %w", err)
 	}
 
 	// Valid host gateway inside the subnet pool range
@@ -171,20 +175,20 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}()
 
 	go func() {
-		<-ctx.Done()
+		<-sessionCtx.Done()
 		listener.Close()
 	}()
 
 	var res connResult
 	select {
 	case res = <-ch:
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-sessionCtx.Done():
+		return sessionCtx.Err()
 	}
 
 	if res.err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if sessionCtx.Err() != nil {
+			return sessionCtx.Err()
 		}
 		return fmt.Errorf("accepting connection: %w", res.err)
 	}
@@ -211,47 +215,37 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}
 	defer restoreTerminal()
 
-	disconnected := make(chan struct{})
-
+	// Monitor context cancellation to force-close connections and break io.Copy loops
 	go func() {
-		select {
-		case <-ctx.Done():
-			conn.Close()
-		case <-disconnected:
-			os.Stdin.Close() // unblocks the pending Read
-			p, _ := os.FindProcess(os.Getpid())
-			if p != nil {
-				_ = p.Signal(os.Interrupt)
-			}
-			<-ctx.Done()
-		}
+		<-sessionCtx.Done()
+		_ = conn.Close()
 	}()
 
-	// Remote → stdout. Close the conn when done to unblock stdin → remote.
+	// Channel to wait for the synchronous completion of the I/O pumps
+	ioDone := make(chan struct{})
+
+	// Remote → stdout pump
 	go func() {
 		_, _ = io.Copy(os.Stdout, conn)
+		// Immediately drop out of raw terminal mode so trailing newlines print normally
+		restoreTerminal()
 		fmt.Print("\r\n[-] Target disconnected.\r\n")
-		conn.Close()
-		close(disconnected)
+		cancelSession() // Signal the other goroutines to wind down
 	}()
 
-	// Stdin → remote. Unblocks when conn is closed above.
+	// Stdin → remote pump
 	go func() {
 		_, _ = io.Copy(conn, os.Stdin)
+		cancelSession() // Signal session teardown if local stdin hits EOF
+		close(ioDone)
 	}()
 
+	// Wait for either Ctrl+C (sessionCtx) or the connection to naturally finish
 	select {
-	case <-disconnected:
-		os.Stdin.Close() // <-- add this
-		p, err := os.FindProcess(os.Getpid())
-		if err == nil {
-			_ = p.Signal(os.Interrupt)
-		}
-		<-ctx.Done()
-	case <-ctx.Done():
+	case <-sessionCtx.Done():
+	case <-ioDone:
 	}
 
-	restoreTerminal()
 	return nil
 }
 
