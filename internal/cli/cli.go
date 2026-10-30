@@ -132,7 +132,7 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		return fmt.Errorf("invalid -subnet: %w", err)
 	}
 
-	// FIXED: Valid host gateway inside the subnet pool range
+	// Valid host gateway inside the subnet pool range
 	virtualIP, err := netip.ParseAddr("172.16.0.1")
 	if err != nil {
 		return err
@@ -187,9 +187,10 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 
 	fmt.Printf("[+] Target connected from %s!\nOpening doodlebob terminal >:3\n", conn.RemoteAddr().String())
 
+	var oldState *term.State
 	switch shellType {
 	case message.ShellNativePty, message.ShellPcapPty:
-		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+		oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
 		if err != nil {
 			return err
 		}
@@ -237,14 +238,18 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		}
 	}()
 
-	// FIXED: Unified select blocks until either event completes.
-	// If the target disconnects cleans, we kick ourselves out of the blocking Stdin Read immediately.
+	// FIXED: Self-signaling watchdog wrapper
+	// If the target disconnects cleanly via 'exit', we catch the channel closure here,
+	// find our own process identifier, and programmatically signal an os.Interrupt.
+	// This naturally fires ctx.Done(), restores the raw terminal TTY state, and clean drops you back to your prompt.
 	select {
 	case <-done:
 		p, err := os.FindProcess(os.Getpid())
 		if err == nil {
 			_ = p.Signal(os.Interrupt)
 		}
+		// Block briefly to ensure the signal registers and the execution flow passes down into clean defers
+		<-ctx.Done()
 	case <-ctx.Done():
 	}
 
