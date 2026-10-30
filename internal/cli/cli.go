@@ -242,6 +242,7 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 
 	select {
 	case <-disconnected:
+		os.Stdin.Close() // <-- add this
 		p, err := os.FindProcess(os.Getpid())
 		if err == nil {
 			_ = p.Signal(os.Interrupt)
