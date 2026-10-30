@@ -109,11 +109,6 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 	}
 }
 
-import (
-	// ... your other imports ...
-	"github.com/MeHungr/pcapnet" // Ensure this is imported directly
-)
-
 // OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
 	// Obtains the source ip and picks a random port for the reverse shell
