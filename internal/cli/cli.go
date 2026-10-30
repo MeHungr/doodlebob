@@ -134,8 +134,12 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	if err != nil {
 		return fmt.Errorf("invalid interface: %w", err)
 	}
+	virtualIP, err := netip.ParseAddr("172.16.0.1")
+	if err != nil {
+		return fmt.Errorf("invalid virtual ip: %w", err)
+	}
 	udpCfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalIP: localIP, LocalPort: uint16(srcPort), ReserveUDPPort: true}
-	serverCfg := pcapnet.ServerConfig{VirtualIP: localIP, AddressPool: pool, MTU: 1200, MaxPeers: 1}
+	serverCfg := pcapnet.ServerConfig{VirtualIP: virtualIP, AddressPool: pool, MTU: 1200, MaxPeers: 1}
 	var listener *pcapnet.TCPServer
 	listener, err = pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
 	if err != nil {
