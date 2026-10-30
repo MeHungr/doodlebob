@@ -116,6 +116,12 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	// Fix: LocalIP() returns a net.IP, not host:port — SplitHostPort would always error.
 	srcIP := network.LocalIP().String()
 
+	// Parse the expected inner target port that the agent will connect back to
+	innerListenPort, err := strconv.Atoi(targetPort)
+	if err != nil {
+		return fmt.Errorf("invalid target port %s: %w", targetPort, err)
+	}
+
 	// ========= PCAP TCP STACK ==========
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -157,7 +163,8 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		MaxPeers:    1,
 	}
 
-	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
+	// FIXED: Pass innerListenPort (the port the target connects to) instead of srcPort
+	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, innerListenPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
 	}
