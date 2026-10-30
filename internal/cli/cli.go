@@ -154,8 +154,7 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		MaxPeers:    1,
 	}
 
-	const virtualTCPPort = 4444
-	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, virtualTCPPort)
+	listener, err := pcapnet.ListenPCAPTCP(setupCtx, udpCfg, serverCfg, srcPort)
 	if err != nil {
 		return fmt.Errorf("opening shell listener: %w", err)
 	}
