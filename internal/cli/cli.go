@@ -218,6 +218,12 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 		case <-ctx.Done():
 			conn.Close()
 		case <-disconnected:
+			os.Stdin.Close() // unblocks the pending Read
+			p, _ := os.FindProcess(os.Getpid())
+			if p != nil {
+				_ = p.Signal(os.Interrupt)
+			}
+			<-ctx.Done()
 		}
 	}()
 
