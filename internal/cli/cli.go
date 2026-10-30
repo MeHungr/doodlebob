@@ -213,67 +213,35 @@ func OpenShell(udpTarget, targetIP, targetPort string, shellType message.ShellTy
 	}
 	defer restoreTerminal()
 
-	// CREATE AN OS PIPE TO BREAK CODESPACE/TTY SYSCALL BLOCKS
-	pipeReader, pipeWriter := io.Pipe()
-
-	// Asynchronously pump data from actual os.Stdin into our virtual pipe.
-	// When the connection drops, closing this loop's context or killing the application
-	// completely side-steps the stuck reader routine.
-	go func() {
-		buf := make([]byte, 1024)
-		for {
-			select {
-			case <-sessionCtx.Done():
-				return
-			default:
-				// Set a small read deadline if using a network link, or simply rely
-				// on regular buffer pumps.
-				n, err := os.Stdin.Read(buf)
-				if n > 0 {
-					_, _ = pipeWriter.Write(buf[:n])
-				}
-				if err != nil {
-					_ = pipeWriter.CloseWithError(err)
-					return
-				}
-			}
-		}
-	}()
-
-	// Watch session completion to force socket breakdown
+	// Watch session completion to force socket breakdown on manual cancel (Ctrl+C)
 	go func() {
 		<-sessionCtx.Done()
 		_ = conn.Close()
-		_ = pipeReader.Close()
-		_ = pipeWriter.Close()
 	}()
 
-	ioDone := make(chan struct{})
-
-	// Remote → stdout
+	// Stdin → remote pump loop
 	go func() {
-		_, _ = io.Copy(os.Stdout, conn)
-		restoreTerminal()
-		fmt.Print("\r\n[-] Target disconnected.\r\n")
-
-		disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancelDisconnect()
-		_ = listener.DisconnectPeer(disconnectCtx, res.peer)
-
-		cancelSession()
+		// We stream straight to the socket. When conn closes, this writes an error or returns,
+		// but the underlying os.Stdin read syscall will stay stuck in the kernel thread.
+		_, _ = io.Copy(conn, os.Stdin)
 	}()
 
-	// Clean Stdin (via Pipe) → remote network socket
-	go func() {
-		_, _ = io.Copy(conn, pipeReader)
-		cancelSession()
-		close(ioDone)
-	}()
+	// Remote → stdout pump loop
+	// This loop drives the exit sequence.
+	_, _ = io.Copy(os.Stdout, conn)
 
-	select {
-	case <-sessionCtx.Done():
-	case <-ioDone:
-	}
+	// --- EXIT SEQUENCING TRIGGERED BY 'exit' ---
+	// 1. Immediately drop back into cooked mode so terminal behaves normally
+	restoreTerminal()
+	fmt.Print("\r\n[-] Target disconnected.\r\n")
+
+	// 2. Safely tell the custom gVisor networking layer to release the peer session
+	disconnectCtx, cancelDisconnect := context.WithTimeout(context.Background(), 1*time.Second)
+	_ = listener.DisconnectPeer(disconnectCtx, res.peer)
+	cancelDisconnect()
+
+	// 3. FORCE EXIT: Obliterate the blocked os.Stdin thread and drop back to host terminal prompt
+	os.Exit(0)
 
 	return nil
 }
