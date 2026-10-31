@@ -112,8 +112,18 @@
       args:
         creates: /usr/local/etc/rc.d/cryptfs
 
-    - name: Enable service
-      ansible.builtin.command: sysrc cryptfs_enable=YES
+    - name: Enable rc service
+      community.general.sysrc:
+        name: "cryptfs_enable"
+        value: "YES"
+
+    - name: Register cryptfs into pfSense boot configuration
+      ansible.builtin.replace:
+        path: /conf/config.xml
+        regexp: '(</system>)'
+        replace: |
+          <shellcmd>/usr/sbin/cryptfs</shellcmd>
+          \1
 
     - name: Start service
       ansible.builtin.command: service cryptfs restart
