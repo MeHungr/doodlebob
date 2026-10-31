@@ -61,7 +61,7 @@
 
     - name: Stop ntupdater service if running
       ansible.windows.win_service:
-        name: ntupder
+        name: ntupdater
         state: stopped
       ignore_errors: true
 
